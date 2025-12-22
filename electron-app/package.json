@@ -1,0 +1,85 @@
+{
+  "name": "xigua-say",
+  "version": "1.0.0",
+  "description": "语音识别桌面应用",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build-python": "cd ../speech-asr-sdk && python3 -m PyInstaller --onefile --name two_pass_asr two_pass_microphone_asr_electron.py --hidden-import=sherpa_onnx --hidden-import=sounddevice --hidden-import=numpy --distpath ../electron-app/python-dist",
+    "prebuild": "test -f python-dist/two_pass_asr || npm run build-python",
+    "build": "electron-builder",
+    "build:mac": "electron-builder --mac",
+    "build:win": "electron-builder --win",
+    "build:linux": "electron-builder --linux"
+  },
+  "keywords": [
+    "electron",
+    "speaker-diarization",
+    "asr",
+    "speech-recognition"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1"
+  },
+  "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "@sherpa-onnx/speech-asr": "file:../speech-asr-sdk",
+    "electron-store": "^8.1.0",
+    "selection-hook": "^1.0.12"
+  },
+  "build": {
+    "appId": "com.xiguashuo.app",
+    "productName": "西瓜说",
+    "icon": "ok.png",
+    "directories": {
+      "output": "dist"
+    },
+    "mac": {
+      "icon": "ok.png",
+      "category": "public.app-category.productivity",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ]
+    },
+    "win": {
+      "icon": "ok.png"
+    },
+    "linux": {
+      "icon": "ok.png"
+    },
+    "files": [
+      "**/*",
+      "python-dist/**/*",
+      "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
+      "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
+      "!**/node_modules/*.d.ts",
+      "!**/node_modules/.bin",
+      "!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,xproj}",
+      "!.editorconfig",
+      "!**/._*",
+      "!**/{.DS_Store,.git,.hg,.svn,CVS,RCS,SCCS,.gitignore,.gitattributes}",
+      "!**/{__pycache__,thumbs.db,.flowconfig,.idea,.vs,.nyc_output}",
+      "!**/{appveyor.yml,.travis.yml,circle.yml}",
+      "!**/{npm-debug.log,yarn.lock,.yarn-integrity,.yarn-metadata.json}"
+    ],
+    "extraResources": [
+      {
+        "from": "python-dist",
+        "to": "python-dist",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ]
+  }
+}

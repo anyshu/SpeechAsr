@@ -1,0 +1,13 @@
+{
+  "name": "@sherpa-onnx/speech-asr",
+  "version": "0.1.0",
+  "description": "Two-pass microphone ASR SDK for sherpa-onnx Electron integration",
+  "main": "index.js",
+  "license": "Apache-2.0",
+  "files": [
+    "index.js",
+    "package.json",
+    "README.md",
+    "two_pass_microphone_asr_electron.py"
+  ]
+}

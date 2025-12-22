@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>西瓜说</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- 自定义标题栏 -->
+        <div class="title-bar">
+            <div class="title-content">
+                <span class="app-icon">🎙️</span>
+                <span class="app-title">西瓜说</span>
+            </div>
+            <div class="window-controls">
+                <button class="control-btn minimize" id="minimizeBtn">−</button>
+                <button class="control-btn close" id="closeBtn">×</button>
+            </div>
+        </div>
+
+        <!-- 主内容区 -->
+        <main class="main-content-container">
+            <!-- 左侧控制面板 -->
+            <div class="control-panel">
+                <!-- 视图切换 -->
+                <div class="view-tabs">
+                    <button class="view-tab-btn active" data-view="process">文件转写</button>
+                    <button class="view-tab-btn" data-view="live">实时转写</button>
+                    <button class="view-tab-btn" data-view="models">模型管理</button>
+                </div>
+
+                <!-- 文件选择 -->
+                <div class="file-section">
+                    <div class="file-drop-zone" id="fileDropZone">
+                        <div class="drop-content">
+                            <span class="drop-text">拖拽音频/视频文件到此处</span>
+                            <button class="select-btn" id="selectFileBtn">选择文件</button>
+                        </div>
+                    </div>
+                    
+                    <div class="selected-file" id="selectedFileInfo" style="display: none;">
+                        <div class="file-name" id="fileName"></div>
+                        <button class="remove-btn" id="removeFileBtn">×</button>
+                    </div>
+                    
+                    <!-- 音频播放器 -->
+                    <div class="audio-player" id="audioPlayer" style="display: none;">
+                        <div class="player-controls">
+                            <button class="play-btn" id="playBtn">▶</button>
+                            <button class="pause-btn" id="pauseBtn" style="display: none;">⏸</button>
+                            <span class="time-display" id="currentTime">00:00</span>
+                            <div class="progress-container">
+                                <div class="progress-bar-audio" id="progressBarAudio">
+                                    <div class="progress-fill-audio" id="progressFillAudio"></div>
+                                    <div class="progress-handle" id="progressHandle"></div>
+                                </div>
+                            </div>
+                            <span class="time-display" id="totalTime">00:00</span>
+                        </div>
+                        <audio id="audioElement" preload="metadata"></audio>
+                    </div>
+                </div>
+
+                <!-- 快速设置 -->
+                <div class="quick-settings">
+                    <div class="setting-row">
+                        <label>处理方式</label>
+                        <select id="processingMode">
+                            <option value="local">本地处理</option>
+                            <option value="api">API处理</option>
+                        </select>
+                    </div>
+                    
+                    <!-- 识别模式选择 -->
+                    <div class="setting-row">
+                        <label>识别模式</label>
+                        <div class="mode-selector">
+                            <button class="mode-btn active" id="diarizationModeBtn" data-mode="diarization">
+                                <span class="mode-icon">👥</span>
+                                <span class="mode-text">说话人分离</span>
+                                <span class="mode-desc">识别不同说话人</span>
+                            </button>
+                            <button class="mode-btn" id="directModeBtn" data-mode="direct">
+                                <span class="mode-icon">🎙️</span>
+                                <span class="mode-text">直接识别</span>
+                                <span class="mode-desc">快速语音转文字</span>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- API设置 -->
+                    <div class="api-settings" id="apiSettings" style="display: none;">
+                        <div class="setting-row">
+                            <label>协议</label>
+                            <select id="apiProtocol">
+                                <option value="https">HTTPS (推荐)</option>
+                                <option value="http">HTTP (备用)</option>
+                            </select>
+                        </div>
+                        <div class="setting-row">
+                            <label>API地址</label>
+                            <input type="text" id="apiUrl" placeholder="xllm.zen5tech.com/speech2txt/speakerdiarization" 
+                                   value="xllm.zen5tech.com/speech2txt/speakerdiarization">
+                        </div>
+                        <div class="setting-row">
+                            <label>请求ID</label>
+                            <input type="text" id="requestId" placeholder="my-request-001">
+                        </div>
+                        
+                        <!-- 语言选择 -->
+                        <div class="setting-row">
+                            <label>识别语言</label>
+                            <div class="language-selector">
+                                <div class="language-group">
+                                    <label class="language-option">
+                                        <input type="radio" name="apiLanguage" value="zh" checked>
+                                        <span class="language-text">中文</span>
+                                    </label>
+                                    <label class="language-option">
+                                        <input type="radio" name="apiLanguage" value="en">
+                                        <span class="language-text">英文</span>
+                                    </label>
+                                    <label class="language-option">
+                                        <input type="radio" name="apiLanguage" value="jp">
+                                        <span class="language-text">日文</span>
+                                    </label>
+                                </div>
+                                <div class="language-group">
+                                    <label class="language-option">
+                                        <input type="radio" name="apiLanguage" value="yue">
+                                        <span class="language-text">粤语</span>
+                                    </label>
+                                    <label class="language-option">
+                                        <input type="radio" name="apiLanguage" value="auto">
+                                        <span class="language-text">中英混合</span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="setting-row">
+                            <button id="testApiBtn" type="button" class="secondary-btn">测试API连接</button>
+                            <button id="testNetworkBtn" type="button" class="secondary-btn" style="margin-left: 10px;">测试基础网络</button>
+                        </div>
+                    </div>
+
+                    <!-- 麦克风录制 -->
+                    <div class="record-section">
+                        <div class="record-header">
+                            <div>
+                                <div class="record-title">麦克风录制</div>
+                                <div class="record-status" id="recordStatus">等待开始</div>
+                            </div>
+                            <button class="record-btn" id="recordBtn">
+                                <span class="record-btn-icon">●</span>
+                                <span class="record-btn-text">开始录制</span>
+                            </button>
+                        </div>
+                    </div>
+
+                <!-- 本地处理设置 -->
+                <div class="local-settings" id="localSettings">
+                        <div class="setting-row">
+                            <label>说话人分离</label>
+                            <label class="switch">
+                                <input type="checkbox" id="enableDiarization" checked>
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <div class="setting-row" id="threadSetting">
+                            <label>线程数</label>
+                            <select id="maxWorkers">
+                                <option value="2">2</option>
+                                <option value="4" selected>4</option>
+                                <option value="6">6</option>
+                                <option value="8">8</option>
+                            </select>
+                        </div>
+                        <div class="setting-row" id="speakerCountSetting">
+                            <label>说话人数量</label>
+                            <select id="speakerCount">
+                                <option value="">自动检测</option>
+                                <option value="2">2人</option>
+                                <option value="3">3人</option>
+                                <option value="4">4人</option>
+                                <option value="5">5人</option>
+                                <option value="6">6人</option>
+                            </select>
+                        </div>
+                        <div class="setting-row" id="thresholdSetting">
+                            <label>阈值</label>
+                            <input type="range" id="clusterThreshold" min="0.5" max="1.0" step="0.1" value="0.9">
+                            <span id="thresholdValue">0.9</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 实时转写设置（独立显示） -->
+                <div class="live-settings" id="liveSettings">
+                    <div class="section-title">实时转写设置</div>
+                    <div class="setting-row">
+                        <label for="liveModeSelect">模式</label>
+                        <select id="liveModeSelect">
+                            <option value="auto">自动两段式（流式+二次识别）</option>
+                            <option value="manual">按键录音（仅二次识别）</option>
+                        </select>
+                    </div>
+                    <div class="setting-row">
+                        <label for="liveBackendSelect">手动模式后端</label>
+                        <select id="liveBackendSelect">
+                            <option value="sensevoice">SenseVoice（二次识别）</option>
+                            <option value="funasr">FunASR-Nano（HF 下载）</option>
+                        </select>
+                    </div>
+                    <div class="setting-row">
+                        <label for="autoPasteLiveCheckbox">自动粘贴实时结果</label>
+                        <label class="switch">
+                            <input type="checkbox" id="autoPasteLiveCheckbox">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="record-device-row">
+                        <label for="micSelect">麦克风设备</label>
+                        <div class="record-device-controls">
+                            <select id="micSelect"></select>
+                            <button class="refresh-btn" id="refreshMicBtn" title="刷新设备列表">⟳</button>
+                        </div>
+                    </div>
+                    <div class="live-load-row">
+                        <button class="action-btn" id="loadLiveBtn" type="button">加载实时模型</button>
+                        <button class="action-btn secondary" id="releaseLiveBtn" type="button" disabled>释放模型</button>
+                        <span class="live-load-status" id="liveModelStatus">模型未加载</span>
+                    </div>
+                    <div class="live-actions">
+                        <button class="live-btn" id="liveBtn">
+                            <span class="live-btn-icon">⏺</span>
+                            <span class="live-btn-text">开始两遍实时转写</span>
+                        </button>
+                        <div class="live-status" id="liveStatus">未开始</div>
+                    </div>
+                    <div class="live-waveform" id="liveWaveform">
+                        <div class="live-waveform-header">
+                            <span>实时电平</span>
+                            <span class="live-waveform-value" id="liveWaveformValue">-- dB</span>
+                        </div>
+                        <canvas id="liveWaveformCanvas" height="80"></canvas>
+                    </div>
+                </div>
+
+                <!-- 操作按钮 -->
+                <button class="process-btn" id="processBtn" disabled>
+                    <svg class="btn-icon" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
+                        <path d="M6.271 5.055a.5.5 0 0 1 .52.038L11 7.055a.5.5 0 0 1 0 .89L6.791 9.907a.5.5 0 0 1-.791-.389V5.482a.5.5 0 0 1 .271-.427z"/>
+                    </svg>
+                    开始处理
+                </button>
+
+                <!-- 进度显示 -->
+                <div class="progress-display" id="progressCompact" style="display: none;">
+                    <div class="progress-info">
+                        <span>处理中</span>
+                        <span id="progressCompactText">0%</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressCompactFill"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧主要内容区 -->
+            <div class="main-content">
+                <!-- 实时转写结果（始终可见，空时隐藏） -->
+                <div class="live-transcript" id="liveTranscript" style="display: none;">
+                    <!-- 上部区域：实时转写结果 80% -->
+                    <div class="live-transcript-top">
+                        <div class="live-transcript-header">
+                            <div class="live-title">两段式实时转写</div>
+                            <div class="live-header-actions">
+                                <button class="action-btn secondary live-paste-btn" id="livePasteBtn" type="button">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                        <rect x="8" y="3" width="8" height="4" rx="1"></rect>
+                                        <path d="M7 7h10a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z"></path>
+                                        <path d="M10 12h6"></path>
+                                    </svg>
+                                    粘贴到当前输入框
+                                </button>
+                                <button class="live-log-toggle-btn" id="liveLogToggleBtn" type="button">
+                                    <span class="live-log-toggle-icon" aria-hidden="true"></span>
+                                    <span class="live-log-toggle-text">隐藏日志</span>
+                                </button>
+                                <div class="live-pill" id="livePill">未开始</div>
+                            </div>
+                        </div>
+                        <div class="live-log-wrapper" id="liveLogWrapper">
+                            <div class="live-log" id="liveLog"></div>
+                        </div>
+                        <div class="live-transcript-body" id="liveTranscriptBody"></div>
+                    </div>
+                    
+                    <!-- 下部区域：第一遍/第二遍 20% -->
+                    <div class="live-transcript-bottom">
+                        <div class="live-two-pass" id="twoPassStatus">
+                            <div class="pass-card">
+                                <div class="pass-title">第一遍 · ZipFormer</div>
+                                <div class="pass-text" id="firstPassText">等待开始</div>
+                            </div>
+                            <div class="pass-card">
+                                <div class="pass-title">第二遍 · SenseVoice</div>
+                                <div class="pass-text final-pass" id="secondPassText">等待开始</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 空状态 -->
+                <div class="empty-state" id="emptyState">
+                    <div class="empty-icon">🎙️</div>
+                    <h3>准备开始语音识别</h3>
+                    <p>选择音频文件并开始处理，识别结果将在这里展示</p>
+                </div>
+
+                <!-- 处理中状态 -->
+                <div class="processing-state" id="processingState" style="display: none;">
+                    <div class="processing-animation">
+                        <div class="wave"></div>
+                        <div class="wave"></div>
+                        <div class="wave"></div>
+                    </div>
+                    <h3 id="processingTitle">正在分析音频...</h3>
+                    <div class="progress-indicator">
+                        <div class="progress-bar-modern">
+                            <div class="progress-fill-modern" id="progressFillMain"></div>
+                        </div>
+                        <span class="progress-text-modern" id="progressTextMain">0%</span>
+                    </div>
+                    <div class="processing-status" id="processingStatus">准备中...</div>
+                    
+                    <!-- 收缩的日志查看器 -->
+                    <div class="log-toggle">
+                        <button class="log-toggle-btn" id="logToggleBtn">
+                            <span>查看详细日志</span>
+                            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                <polyline points="6,9 12,15 18,9"></polyline>
+                            </svg>
+                        </button>
+                        <div class="log-panel" id="logPanel">
+                            <div class="log-content" id="progressLog"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 结果展示区 -->
+                <div class="results-display" id="resultsDisplay" style="display: none;">
+                    <!-- 结果头部 -->
+                    <div class="results-hero">
+                        <div class="results-title">
+                            <h2>🎯 识别完成</h2>
+                            <div class="results-summary" id="resultsSummary"></div>
+                        </div>
+                        <div class="results-actions">
+                            <button class="action-btn secondary" id="pasteToInputBtn">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                    <rect x="8" y="3" width="8" height="4" rx="1"></rect>
+                                    <path d="M7 7h10a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z"></path>
+                                    <path d="M10 12h6"></path>
+                                </svg>
+                                粘贴到当前输入框
+                            </button>
+                            <button class="action-btn primary" id="exportBtn">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                    <polyline points="7,10 12,15 17,10"/>
+                                    <line x1="12" y1="15" x2="12" y2="3"/>
+                                </svg>
+                                导出结果
+                            </button>
+                            <button class="action-btn secondary" id="clearBtn">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                    <polyline points="3,6 5,6 21,6"/>
+                                    <path d="m19,6v14a2,2 0 0,1 -2,2H7a2,2 0 0,1 -2,-2V6m3,0V4a2,2 0 0,1 2,-2h4a2,2 0 0,1 2,2v2"/>
+                                </svg>
+                                重新开始
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 结果内容 -->
+                    <div class="results-timeline" id="resultsContent"></div>
+                </div>
+
+                <!-- 模型下载视图 -->
+                <div class="model-download-view" id="modelDownloadView" style="display: none;">
+                    <div class="model-download-header">
+                        <div>
+                            <div class="model-download-title">模型下载</div>
+                            <div class="model-download-subtitle" id="modelListStatus">选择需要下载的模型，下载完成后即可离线使用</div>
+                        </div>
+                        <div class="model-download-actions">
+                            <button class="link-btn" id="openModelUrlBtn" title="打开模型文件夹">📁 模型目录</button>
+                        </div>
+                        <button class="close-model-download" id="closeModelDownloadView" aria-label="关闭模型下载页面">×</button>
+                    </div>
+                    <div class="model-download-list">
+                        <div class="model-card">
+                            <div class="model-card-info">
+                                <div class="model-chip">ASR</div>
+                                <div>
+                                    <div class="model-card-title">SenseVoice 多语种</div>
+                                    <div class="model-card-desc">包含中/英/日/韩/粤五语种，内置 VAD，支持离线说话人分离</div>
+                                    <div class="model-meta">约 500MB，解压后占用约 1.3GB</div>
+                                </div>
+                            </div>
+                            <div class="model-card-actions">
+                                <div class="model-card-status" id="senseVoiceStatusText">未下载</div>
+                                <div class="model-card-progress" id="senseVoiceProgress" style="display: none;">
+                                    <div class="model-card-progress-bar">
+                                        <div class="model-card-progress-fill" id="senseVoiceProgressFill"></div>
+                                    </div>
+                                    <span class="model-card-progress-num" id="senseVoiceProgressNumber">0%</span>
+                                </div>
+                                <button class="model-card-btn" id="senseVoiceActionBtn">开始下载</button>
+                            </div>
+                        </div>
+                        <div class="model-card">
+                            <div class="model-card-info">
+                                <div class="model-chip">PUNC</div>
+                                <div>
+                                    <div class="model-card-title">中英标点恢复</div>
+                                    <div class="model-card-desc">CT-Transformer 轻量标点模型，适用于中英文混合文本，离线修复标点</div>
+                                    <div class="model-meta">压缩包约 62MB</div>
+                                </div>
+                            </div>
+                            <div class="model-card-actions">
+                                <div class="model-card-status" id="punctStatusText">未下载</div>
+                                <div class="model-card-progress" id="punctProgress" style="display: none;">
+                                    <div class="model-card-progress-bar">
+                                        <div class="model-card-progress-fill" id="punctProgressFill"></div>
+                                    </div>
+                                    <span class="model-card-progress-num" id="punctProgressNumber">0%</span>
+                                </div>
+                                <button class="model-card-btn" id="punctActionBtn">开始下载</button>
+                            </div>
+                        </div>
+                        <div class="model-card">
+                            <div class="model-card-info">
+                                <div class="model-chip">ASR</div>
+                                <div>
+                                    <div class="model-card-title">ZipFormer 双语流式</div>
+                                    <div class="model-card-desc">流式中英双语 ZipFormer 模型，适合实时语音转写</div>
+                                    <div class="model-meta">压缩包约 400MB</div>
+                                </div>
+                            </div>
+                            <div class="model-card-actions">
+                                <div class="model-card-status" id="streamingStatusText">未下载</div>
+                                <div class="model-card-progress" id="streamingProgress" style="display: none;">
+                                    <div class="model-card-progress-bar">
+                                        <div class="model-card-progress-fill" id="streamingProgressFill"></div>
+                                    </div>
+                                    <span class="model-card-progress-num" id="streamingProgressNumber">0%</span>
+                                </div>
+                                <button class="model-card-btn" id="streamingActionBtn">开始下载</button>
+                            </div>
+                        </div>
+                        <div class="model-card">
+                            <div class="model-card-info">
+                                <div class="model-chip">VAD</div>
+                                <div>
+                                    <div class="model-card-title">Silero VAD v5</div>
+                                    <div class="model-card-desc">语音活动检测，用于实时静音裁剪/分段</div>
+                                    <div class="model-meta">单文件 ~ 1.7MB</div>
+                                </div>
+                            </div>
+                            <div class="model-card-actions">
+                                <div class="model-card-status" id="vadStatusText">未下载</div>
+                                <div class="model-card-progress" id="vadProgress" style="display: none;">
+                                    <div class="model-card-progress-bar">
+                                        <div class="model-card-progress-fill" id="vadProgressFill"></div>
+                                    </div>
+                                    <span class="model-card-progress-num" id="vadProgressNumber">0%</span>
+                                </div>
+                                <button class="model-card-btn" id="vadActionBtn">开始下载</button>
+                            </div>
+                        </div>
+                        <div class="model-hint">
+                            下载完成后，本地处理和实时转写都会使用对应模型。模型路径可通过左侧 📁 按钮打开。
+                        </div>
+                    </div>
+                </div>
+            </div> <!-- main-content -->
+        </main>
+
+        <!-- 全局按键录音提示 -->
+        <div class="ptt-banner" id="pttBanner" aria-live="polite">
+            <div class="ptt-indicator"></div>
+            <div class="ptt-banner-text">
+                <div class="ptt-banner-title">按键录音</div>
+                <div class="ptt-banner-state" id="pttBannerState">正在录音...</div>
+            </div>
+            <div class="ptt-banner-hint" id="pttBannerHint">090松开设定按键以结束</div>
+        </div>
+
+        <!-- 状态栏 -->
+        <footer class="status-bar">
+            <div class="status-left">
+                <span id="statusText">就绪</span>
+            </div>
+            <div class="status-right">
+                <span id="versionText">v1.0.0</span>
+            </div>
+        </footer>
+    </div>
+
+    <script src="renderer.js"></script>
+</body>
+</html> 
