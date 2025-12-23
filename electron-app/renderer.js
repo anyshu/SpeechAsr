@@ -18,6 +18,7 @@ let audioDevices = [];
 let selectedMicId = null;
 let liveMode = 'auto';
 let liveTranscriptSegments = [];
+let latestPttFirstPassText = '';
 const liveSegmentKeys = new Set();
 let enableLiveAutoPaste = false;
 let lastAutoPasteKey = '';
@@ -1318,6 +1319,27 @@ function setLiveUI(status, options = {}) {
     updateLiveModelUI();
 }
 
+function resetPttOverlayText() {
+    latestPttFirstPassText = '';
+}
+
+function updatePttOverlayText(text) {
+    latestPttFirstPassText = text || '';
+    // 在按键录音模式下（isPttRecording 或手动模式）更新小窗
+    if (liveMode !== 'manual' && !isPttRecording) {
+        return;
+    }
+    try {
+        window.electronAPI?.updatePttOverlay?.({
+            state: 'recording',
+            message: latestPttFirstPassText,
+            lock: true
+        });
+    } catch (err) {
+        // 忽略小窗更新失败，避免打断录音流程
+    }
+}
+
 function setPttBannerState(state = 'idle', message, hint) {
     // 不再显示内嵌的小窗，仅驱动外部全局小窗
     if (pttBanner) {
@@ -1335,8 +1357,10 @@ function setPttBannerState(state = 'idle', message, hint) {
     const preset = presets[state] || presets.recording;
     const finalMessage = message || preset.message;
     const finalHint = hint ?? preset.hint;
+    const overlayMessage = latestPttFirstPassText || finalMessage;
 
     if (state === 'idle') {
+        resetPttOverlayText();
         window.electronAPI?.hidePttOverlay?.();
         window.electronAPI?.armPttOverlay?.(false);
         return;
@@ -1344,11 +1368,11 @@ function setPttBannerState(state = 'idle', message, hint) {
 
     if (state === 'recording') {
         window.electronAPI?.armPttOverlay?.(true);
-        startPttTimer(finalHint, finalMessage);
+        startPttTimer(finalHint, overlayMessage);
     } else {
         window.electronAPI?.updatePttOverlay?.({
             state,
-            message: finalMessage,
+            message: overlayMessage,
             hint: finalHint,
             lock: Boolean(preset.lock),
             autoHideMs: preset.autoHideMs
@@ -1428,17 +1452,9 @@ function handleLiveResult(payload) {
     }
     if (payload.type === 'first-pass') {
         // 直接替换显示当前识别结果（不追加）
-        updateFirstPassDisplay(payload.text || '');
-        // If in manual mode, forward the one-pass text to the global overlay
-        // so the small window shows the first-pass result. Send updates even
-        // if `isPttRecording` flag isn't set to ensure live updates appear.
-        if (liveMode === 'manual') {
-            try {
-                window.electronAPI?.updatePttOverlay?.({ state: 'recording', message: payload.text || '' });
-            } catch (e) {
-                // ignore overlay update errors
-            }
-        }
+        const text = payload.text || '';
+        updateFirstPassDisplay(text);
+        updatePttOverlayText(text);
         return;
     }
     if (payload.type === 'skip') {
@@ -1501,6 +1517,7 @@ function handleLiveResult(payload) {
         if (payload.stage === 'second-pass') {
             const combinedText = payload.segments.map((seg) => seg.text || '').join(' ').trim();
             updateSecondPassDisplay(combinedText);
+            latestPttFirstPassText = combinedText || latestPttFirstPassText;
             appendLiveLog(`第二遍完成: ${combinedText}`);
         }
         addLiveSegments(payload.segments);
@@ -1687,6 +1704,7 @@ async function startPttRecording() {
             return;
         }
         await initMicDevices();
+        resetPttOverlayText();
         setView('live');
         resetLiveTranscriptStore();
         if (liveTranscriptBody) {

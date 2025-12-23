@@ -35,7 +35,7 @@
       border: 1px solid rgba(255, 255, 255, 0.03);
       color: #f8fafc;
       box-shadow: 0 10px 22px rgba(15, 23, 42, 0.32);
-      min-width: 220px;
+      width: 360px;
       max-width: 360px;
       opacity: 0;
       transform: translateY(8px);
@@ -55,12 +55,13 @@
       animation: pttPulse 1s ease-in-out infinite;
       flex-shrink: 0;
     }
-    .texts {
+    /* 内容区域容器 */
+    .content-area {
+      flex: 1;
+      min-width: 0;
       display: flex;
       flex-direction: column;
       gap: 2px;
-      flex: 1;
-      min-width: 0;
     }
     .title {
       font-size: 10px;
@@ -69,61 +70,52 @@
       text-transform: none;
       font-weight: 600;
     }
-    .state {
-      font-size: 12px;
-      font-weight: 600;
-      color: #f8fafc;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .hint {
-      font-size: 10px;
-      color: #e2e8f0;
-      opacity: 0.95;
-      font-weight: 500;
-      margin-left: auto;
-      white-space: nowrap;
-      flex-shrink: 0;
-    }
-    /* Sliding window container */
+    /* Sliding window container - 遮罩区域，宽度等于小窗宽度 */
     .state-wrap {
-      overflow: hidden;
+      overflow-x: auto;
+      overflow-y: hidden;
       position: relative;
-      min-width: 0;
-      max-width: 360px;
+      width: 316px; /* = 360px - indicator(10px) - gap(10px) - padding(24px) */
+      max-width: 316px;
       height: 1.4em;
       display: flex;
       align-items: center;
+      /* 隐藏滚动条但保持滚动功能 */
+      scrollbar-width: none; /* Firefox */
+      -ms-overflow-style: none; /* IE/Edge */
+    }
+    .state-wrap::-webkit-scrollbar {
+      display: none; /* Chrome/Safari */
     }
     .state-inner {
       display: inline-block;
       white-space: nowrap;
-      padding-left: 6px;
+      padding-left: 0;
       padding-right: 8px;
       font-size: 12px;
       line-height: 1.2;
+      flex-shrink: 0; /* 防止 flex 容器压缩子元素 */
     }
-    /* Left fade mask to visually hide old content */
+    /* Left fade mask to visually hide old content - 覆盖整个遮罩区域 */
     .state-wrap::before {
       content: '';
       position: absolute;
       left: 0;
       top: 0;
       bottom: 0;
-      width: 40px;
+      width: 80px; /* 更宽的渐变遮罩区域 */
       pointer-events: none;
       background: linear-gradient(to right, rgba(15,23,42,0.95), rgba(15,23,42,0));
       transition: opacity 160ms ease;
     }
     .state-wrap.paused::before { opacity: 0.12; }
-    .state-wrap.expanded { max-width: 720px; }
+    .state-wrap.expanded { max-width: 316px; }
     .overlay[data-state="processing"] .indicator {
       background: #f59e0b;
       box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.2);
       animation: pttPulseAmber 1.2s ease-in-out infinite;
     }
-    .overlay[data-state="processing"] .state {
+    .overlay[data-state="processing"] .state-inner {
       color: #fde68a;
     }
     .overlay[data-state="done"] .indicator {
@@ -131,7 +123,7 @@
       box-shadow: 0 0 0 6px rgba(34, 197, 94, 0.18);
       animation: none;
     }
-    .overlay[data-state="done"] .state {
+    .overlay[data-state="done"] .state-inner {
       color: #bbf7d0;
     }
     .overlay[data-state="error"] .indicator {
@@ -139,7 +131,7 @@
       box-shadow: 0 0 0 6px rgba(239, 68, 68, 0.25);
       animation: none;
     }
-    .overlay[data-state="error"] .state {
+    .overlay[data-state="error"] .state-inner {
       color: #fecdd3;
     }
     @keyframes pttPulse {
@@ -157,16 +149,15 @@
 <body>
     <div class="overlay" id="overlay" data-state="idle">
       <div class="indicator" id="indicator"></div>
-      <div class="texts">
+      <div class="content-area">
         <!-- `hintText` will show duration label like: 按键录音 00:00:00.123 -->
         <div class="title" id="hintText">按键录音</div>
 
         <!-- sliding window: fixed container -> inner long line (white-space:nowrap) -->
         <div class="state-wrap" id="stateWrap" title="悬停暂停自动滚动，点击切换展开/收缩">
-          <div class="state state-inner" id="stateInner">等待中</div>
+          <div class="state-inner" id="stateInner">等待中</div>
         </div>
       </div>
-      <div class="hint" id="extraHint" aria-hidden="true"></div>
     </div>
     <script>
       const overlay = document.getElementById('overlay');
@@ -181,26 +172,35 @@
 
       function doScrollToRight() {
         try {
+          // 立即滚动到最右侧
           stateWrap.scrollLeft = stateWrap.scrollWidth;
+          console.log('[doScrollToRight] scrollLeft:', stateWrap.scrollLeft, 'scrollWidth:', stateWrap.scrollWidth);
+          // 使用 requestAnimationFrame 确保在布局更新后再次滚动
+          requestAnimationFrame(() => {
+            stateWrap.scrollLeft = stateWrap.scrollWidth;
+            console.log('[doScrollToRight] after RAF scrollLeft:', stateWrap.scrollLeft);
+          });
         } catch (e) {
-          // ignore
+          console.error('[doScrollToRight] Error:', e);
         }
       }
 
       function scheduleScroll() {
         if (autoScrollPaused) return;
-        if (scrollThrottleTimer) return;
-        scrollThrottleTimer = setTimeout(() => {
-          scrollThrottleTimer = null;
-          doScrollToRight();
-        }, SCROLL_THROTTLE_MS);
+        // 立即执行滚动，不使用节流，确保最新内容可见
+        doScrollToRight();
       }
 
       function setOverlayMessage(text) {
         // Replace content (one-pass text). If you prefer incremental append,
         // change this to append fragments instead.
+        const oldText = stateInner.textContent;
         stateInner.textContent = text || '';
-        if (!autoScrollPaused) scheduleScroll();
+        console.log('[setOverlayMessage]', { text, oldText, scrollWidth: stateWrap.scrollWidth, scrollLeft: stateWrap.scrollLeft });
+        // 只有文本真正变化时才滚动
+        if (text !== oldText && !autoScrollPaused) {
+          scheduleScroll();
+        }
       }
 
       // Hover to pause auto-scroll and reveal left context (weaken mask)
@@ -229,6 +229,7 @@
       });
 
       function applyOverlay(payload = {}) {
+        console.log('[applyOverlay] Called with:', payload);
         const state = payload.state || 'recording';
         // `message` is used for one-pass ASR text (may be empty string)
         const message = payload.message !== undefined ? payload.message : (state === 'processing' ? '正在识别...' : state === 'done' ? '识别完成' : state === 'error' ? '录音失败' : '正在录音...');
@@ -249,6 +250,7 @@
       }
 
       window.overlayAPI?.onUpdate?.((payload) => {
+        console.log('[overlay:update] Event received:', payload);
         applyOverlay(payload);
       });
 

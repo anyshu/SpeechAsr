@@ -105,6 +105,8 @@ function ensureOverlayWindow() {
       overlayWindow.webContents.send('overlay:update', overlayPendingPayload);
       overlayPendingPayload = null;
     }
+    // DEBUG: 打开小窗的开发者工具
+    overlayWindow.webContents.openDevTools({ mode: 'detach' });
   });
 
   overlayWindow.on('closed', () => {
@@ -136,6 +138,7 @@ function sendOverlayPayload(payload) {
   }
   overlayPendingPayload = null;
   try {
+    console.log('[sendOverlayPayload] Sending:', payload);
     win.webContents.send('overlay:update', payload);
   } catch (err) {
     console.warn('Failed to send overlay payload', err);
@@ -175,12 +178,14 @@ function startOverlayTimer(message, hint, lock) {
   overlayStartTime = Date.now();
   // Cache the message so renderer can update it while timer runs
   overlayMessageCache = message || '';
+  console.log('[startOverlayTimer] Initialized with:', { message, hint, overlayMessageCache });
 
   const tick = () => {
     const elapsed = Date.now() - overlayStartTime;
     const formatted = formatDurationMs(elapsed);
     const durationHint = `按键录音 ${formatted}`;
     // Send one-pass text in `message` and duration label in `hint`.
+    console.log('[tick] Sending:', { overlayMessageCache, durationHint });
     updateOverlay('recording', overlayMessageCache || '', durationHint, { lock: true });
   };
 
@@ -1299,6 +1304,7 @@ ipcMain.handle('read-file', async (event, filePath) => {
 ipcMain.on('ptt-overlay:update', (_event, payload) => {
   if (!payload) return;
   const { state, message, hint, autoHideMs, lock } = payload;
+  console.log('[ptt-overlay:update] Received:', { state, message, hint, overlayTimer: !!overlayTimer, overlayMessageCache });
   if (state === 'idle') {
     hideOverlay(true);
     return;
@@ -1308,6 +1314,7 @@ ipcMain.on('ptt-overlay:update', (_event, payload) => {
     // restarting timer; otherwise start it.
     if (overlayTimer) {
       overlayMessageCache = message || overlayMessageCache || '';
+      console.log('[ptt-overlay:update] Updated cache:', overlayMessageCache);
       // immediately send an update so overlay displays new message
       const formatted = formatDurationMs(Date.now() - overlayStartTime);
       const durationHint = `按键录音 ${formatted}`;
@@ -1331,6 +1338,17 @@ ipcMain.on('ptt-overlay:arm', (_event, enabled) => {
   if (!overlayArmed) {
     overlayLocked = false;
     hideOverlay(true);
+  }
+});
+
+// Debug: trigger overlay test payload (use from renderer devtools)
+ipcMain.on('ptt-overlay:test', () => {
+  try {
+    const now = Date.now();
+    const formatted = formatDurationMs(0);
+    sendOverlayPayload({ state: 'recording', message: `测试 overlay ${now}`, hint: `按键录音 ${formatted}` });
+  } catch (err) {
+    console.warn('ptt-overlay:test failed', err);
   }
 });
 

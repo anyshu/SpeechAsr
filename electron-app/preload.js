@@ -80,6 +80,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   updatePttOverlay: (payload) => ipcRenderer.send('ptt-overlay:update', payload),
   hidePttOverlay: () => ipcRenderer.send('ptt-overlay:hide'),
   armPttOverlay: (enabled) => ipcRenderer.send('ptt-overlay:arm', enabled),
+  testPttOverlay: () => ipcRenderer.send('ptt-overlay:test'),
   onPunctuationModelDownloadProgress: (callback) => ipcRenderer.on('punctuation-download-progress', callback),
   onStreamingModelDownloadProgress: (callback) => ipcRenderer.on('streaming-download-progress', callback),
   onVadModelDownloadProgress: (callback) => ipcRenderer.on('vad-download-progress', callback),
