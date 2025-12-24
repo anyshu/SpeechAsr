@@ -192,6 +192,7 @@ def get_args():
     parser.add_argument("--vad-max-speech", default=8.0, type=float, help="Maximum speech duration before forcing a cut (seconds)")
     parser.add_argument("--wav-input", default="", type=str, help="If provided, run a single-pass decode on this 16k mono WAV and exit")
     parser.add_argument("--manual-mode", action="store_true", help="Push-to-talk mode: record from mic until 'stop' is received on stdin, then run 2nd pass only")
+    parser.add_argument("--manual-realtime", action="store_true", help="Manual mode with real-time VAD+2pass: while holding hotkey, process 1pass -> VAD -> 2pass -> paste for each speech segment")
     parser.add_argument("--start-paused", action="store_true", help="Start microphone capture paused until 'start' is received on stdin (streaming mode)")
     return parser.parse_args()
 
@@ -375,9 +376,17 @@ def process_wav_input(args, first_pass, second_pass, vad_bundle):
     sys.exit(0)
 
 
-def run_manual_mode(args, second_pass, first_pass: Optional[sherpa_onnx.OnlineRecognizer] = None):
+def run_manual_mode(args, second_pass, first_pass: Optional[sherpa_onnx.OnlineRecognizer] = None, vad_bundle=None):
     emit({"type": "ready"})
-    emit({"type": "log", "message": "Manual push-to-talk mode: send 'start'/'stop' via stdin; 'quit' to exit"} )
+
+    realtime_mode = args.manual_realtime
+    emit({"type": "log", "message": f"[DEBUG] run_manual_mode: realtime_mode={realtime_mode}, vad_bundle={vad_bundle is not None}"})
+    if realtime_mode:
+        emit({"type": "log", "message": "Manual push-to-talk mode (REALTIME VAD+2pass): send 'start'/'stop' via stdin; 'quit' to exit"})
+        if not vad_bundle:
+            emit({"type": "log", "message": "Warning: realtime mode works best with VAD enabled (--silero-vad-model)"})
+    else:
+        emit({"type": "log", "message": "Manual push-to-talk mode (LEGACY): send 'start'/'stop' via stdin; 'quit' to exit"})
 
     record_event = threading.Event()
     exit_event = threading.Event()
@@ -389,8 +398,19 @@ def run_manual_mode(args, second_pass, first_pass: Optional[sherpa_onnx.OnlineRe
     last_partial = ""
     device_index = choose_input_device(args.device, args.device_index)
     blocksize = max(1, int(args.chunk_duration * args.sample_rate))
+    total_samples_seen = 0
+    segment_start_sample = 0
+
+    # VAD for realtime mode
+    vad = None
+    vad_window_size = None
+    if realtime_mode and vad_bundle:
+        vad, vad_window_size = vad_bundle
+        emit({"type": "log", "message": f"[DEBUG] VAD initialized: vad={vad is not None}, window_size={vad_window_size}"})
+        emit({"type": "log", "message": "VAD enabled for realtime manual mode"})
 
     def flush_and_decode():
+        """Legacy mode: flush all buffered audio at stop for single 2pass decode."""
         with buffer_lock:
             samples = np.concatenate(buffer) if buffer else np.zeros(0, dtype=np.float32)
             buffer.clear()
@@ -420,24 +440,71 @@ def run_manual_mode(args, second_pass, first_pass: Optional[sherpa_onnx.OnlineRe
         )
         emit({"type": "log", "message": "Second-pass decode finished"})
 
+    def decode_segment(segment_audio: np.ndarray, start_sample: int):
+        """Realtime mode: decode a VAD-detected segment immediately."""
+        if segment_audio.size == 0:
+            return
+        duration = len(segment_audio) / args.sample_rate
+        start_time = max(0.0, start_sample / args.sample_rate)
+        end_time = start_time + duration
+        text = run_second_pass(second_pass, segment_audio, args.sample_rate)
+        emit(
+            {
+                "type": "result",
+                "stage": "second-pass",
+                "segments": [
+                    {
+                        "start_time": round(start_time, 2),
+                        "end_time": round(end_time, 2),
+                        "text": text,
+                        "speaker": "PushToTalk",
+                    }
+                ],
+            }
+        )
+        emit({"type": "log", "message": f"Realtime 2pass: {len(segment_audio)/args.sample_rate:.2f}s -> '{text}'"})
+
     def audio_callback(indata, frames, time_info, status):  # pylint: disable=unused-argument
+        nonlocal last_partial, total_samples_seen, segment_start_sample, vad
         if record_event.is_set():
+            samples_copy = indata.copy().reshape(-1)
             with buffer_lock:
-                buffer.append(indata.copy().reshape(-1))
+                buffer.append(samples_copy)
+
+            if realtime_mode and vad:
+                # Realtime VAD mode: feed to VAD and process segments immediately
+                try:
+                    vad.accept_waveform(samples_copy)
+                    while not vad.empty():
+                        segment = vad.front
+                        segment_audio = np.asarray(segment.samples, dtype=np.float32).reshape(-1)
+                        emit({"type": "log", "message": f"[DEBUG] VAD segment detected: {len(segment_audio)/args.sample_rate:.2f}s"})
+                        decode_segment(segment_audio, segment.start)
+                        vad.pop()
+                except Exception as exc:  # pylint: disable=broad-except
+                    emit({"type": "log", "message": f"VAD processing failed: {exc}"})
+            else:
+                # Log why VAD is not processing
+                if realtime_mode and not vad:
+                    # Only log once in a while to avoid spamming
+                    if total_samples_seen % (args.sample_rate * 5) == 0:  # Every 5 seconds
+                        emit({"type": "log", "message": "[DEBUG] realtime_mode=True but vad is None"})
+
             if first_pass and first_stream is not None:
                 try:
-                    first_stream.accept_waveform(args.sample_rate, indata.copy().reshape(-1))
+                    first_stream.accept_waveform(args.sample_rate, samples_copy)
                     while first_pass.is_ready(first_stream):
                         first_pass.decode_stream(first_stream)
                     raw_partial = first_pass.get_result(first_stream)
                     partial = getattr(raw_partial, "text", raw_partial)
                     partial = str(partial or "").lower().strip()
-                    nonlocal last_partial
                     if partial != last_partial:
                         emit({"type": "first-pass", "text": partial})
                         last_partial = partial
                 except Exception as exc:  # pylint: disable=broad-except
                     emit({"type": "log", "message": f"First-pass update failed: {exc}"})
+
+            total_samples_seen += len(samples_copy)
 
     def stop_stream():
         nonlocal stream_handle
@@ -476,26 +543,57 @@ def run_manual_mode(args, second_pass, first_pass: Optional[sherpa_onnx.OnlineRe
                 return False
 
     def stdin_listener():
+        nonlocal total_samples_seen, segment_start_sample, first_stream, last_partial, vad
         for line in sys.stdin:
             cmd = line.strip().lower()
             if cmd == "start":
                 with buffer_lock:
                     buffer.clear()
+                total_samples_seen = 0
+                segment_start_sample = 0
                 if first_pass:
                     try:
-                        nonlocal first_stream, last_partial
                         first_stream = first_pass.create_stream()
                         last_partial = ""
                     except Exception as exc:  # pylint: disable=broad-except
                         emit({"type": "log", "message": f"Failed to reset first-pass stream: {exc}"})
+                if realtime_mode and vad:
+                    # Recreate VAD for new recording session
+                    try:
+                        vad_config = sherpa_onnx.VadModelConfig()
+                        vad_config.sample_rate = args.sample_rate
+                        vad_config.silero_vad.model = str(guess_silero(args.silero_vad_model))
+                        vad_config.silero_vad.threshold = args.vad_threshold
+                        vad_config.silero_vad.min_silence_duration = args.vad_min_silence
+                        vad_config.silero_vad.min_speech_duration = args.vad_min_speech
+                        vad_config.silero_vad.max_speech_duration = args.vad_max_speech
+                        vad = sherpa_onnx.VoiceActivityDetector(vad_config, buffer_size_in_seconds=120)
+                        emit({"type": "log", "message": "VAD reset for new recording session"})
+                    except Exception as exc:  # pylint: disable=broad-except
+                        emit({"type": "log", "message": f"Failed to reset VAD: {exc}"})
                 if start_stream():
                     record_event.set()
                     emit({"type": "log", "message": "Recording started"})
             elif cmd == "stop":
                 if record_event.is_set():
                     record_event.clear()
-                    flush_and_decode()
-                    emit({"type": "log", "message": "Recording stopped"})
+                    if realtime_mode:
+                        # Realtime mode: VAD segments already processed, just flush any remaining
+                        if vad:
+                            try:
+                                vad.flush()
+                                while not vad.empty():
+                                    segment = vad.front
+                                    segment_audio = np.asarray(segment.samples, dtype=np.float32).reshape(-1)
+                                    decode_segment(segment_audio, segment.start)
+                                    vad.pop()
+                            except Exception as exc:  # pylint: disable=broad-except
+                                emit({"type": "log", "message": f"VAD flush failed: {exc}"})
+                        emit({"type": "log", "message": "Recording stopped (realtime mode)"})
+                    else:
+                        # Legacy mode: decode all buffered audio at once
+                        flush_and_decode()
+                        emit({"type": "log", "message": "Recording stopped"})
                 else:
                     emit({"type": "log", "message": "Stop received but not recording; closing microphone if open"})
                 stop_stream()
@@ -534,6 +632,12 @@ def main():
     try:
         emit({"type": "log", "message": "Creating recognizers. Please wait..."})
         emit({"type": "log", "message": f"Args: {json.dumps(vars(args), ensure_ascii=False)}"})
+        emit({"type": "log", "message": f"===== Python Args Summary ====="})
+        emit({"type": "log", "message": f"manual_mode: {args.manual_mode}"})
+        emit({"type": "log", "message": f"manual_realtime: {args.manual_realtime}"})
+        emit({"type": "log", "message": f"device: {args.device}"})
+        emit({"type": "log", "message": f"sample_rate: {args.sample_rate}"})
+        emit({"type": "log", "message": f"============================"})
         second_pass = create_second_pass(args)
         first_pass = create_first_pass(args)
         vad_bundle = create_vad(args)
@@ -545,7 +649,12 @@ def main():
         process_wav_input(args, first_pass, second_pass, vad_bundle)
         return
 
-    if args.disable_endpoint and not vad_bundle and not args.manual_mode:
+    # Manual push-to-talk mode has its own dedicated flow
+    if args.manual_mode:
+        run_manual_mode(args, second_pass, first_pass, vad_bundle)
+        return
+
+    if args.disable_endpoint and not vad_bundle:
         emit({"type": "error", "message": "Endpoint detection is disabled but no VAD is enabled; cannot segment audio."})
         sys.exit(1)
 
@@ -584,6 +693,13 @@ def main():
     mode_lock = threading.Lock()
     mode_changed = threading.Event()
     mode_state = "manual" if args.manual_mode else "auto"
+    realtime_manual = args.manual_realtime
+    emit({"type": "log", "message": f"===== Mode Configuration ====="})
+    emit({"type": "log", "message": f"mode_state: {mode_state}"})
+    emit({"type": "log", "message": f"realtime_manual: {realtime_manual}"})
+    emit({"type": "log", "message": f"============================"})
+    if mode_state == "manual":
+        emit({"type": "log", "message": f"Manual mode: realtime={realtime_manual}"})
     if mode_state == "auto" and not args.start_paused:
         record_event.set()
     else:
@@ -746,7 +862,25 @@ def main():
                 emit({"type": "log", "message": "Capture started (start command received)"})
             elif cmd == "stop":
                 record_event.clear()
-                flush_current_segment("stop")
+                if realtime_manual and vad:
+                    # Flush any remaining VAD segments
+                    try:
+                        vad.flush()
+                        while not vad.empty():
+                            segment = vad.front
+                            segment_audio = np.asarray(segment.samples, dtype=np.float32).reshape(-1)
+                            emit(
+                                {
+                                    "type": "log",
+                                    "message": f"[REALTIME MANUAL] Flushing VAD segment: {len(segment_audio)/args.sample_rate:.2f}s",
+                                }
+                            )
+                            finalize_segment(segment_audio, segment.start)
+                            vad.pop()
+                    except Exception as exc:  # pylint: disable=broad-except
+                        emit({"type": "log", "message": f"VAD flush failed: {exc}"})
+                else:
+                    flush_current_segment("stop")
                 emit({"type": "log", "message": "Capture stopped (models kept alive)"})
             elif cmd in ("mode manual", "manual"):
                 record_event.clear()
@@ -910,8 +1044,35 @@ def main():
                 emit({"type": "log", "message": f"Endpoint detected, flushing {len(chunk_audio)/args.sample_rate:.2f}s audio"})
                 finalize_segment(chunk_audio, start_sample)
             else:
-                # 手动模式下不自动分段，等待 stop 指令触发 finalize
-                pass
+                # Manual mode
+                if realtime_manual and vad:
+                    # Realtime manual mode: use VAD to segment and process immediately
+                    vad_segmented = False
+                    try:
+                        window = vad_window_size or len(samples)
+                        offset = 0
+                        while offset < len(samples):
+                            end = min(offset + window, len(samples))
+                            vad.accept_waveform(samples[offset:end])
+                            offset = end
+
+                            while not vad.empty():
+                                segment = vad.front
+                                segment_start = segment.start
+                                segment_audio = np.asarray(segment.samples, dtype=np.float32).reshape(-1)
+                                emit(
+                                    {
+                                        "type": "log",
+                                        "message": f"[REALTIME MANUAL] VAD segment: {len(segment_audio)/args.sample_rate:.2f}s",
+                                    }
+                                )
+                                finalize_segment(segment_audio, segment_start)
+                                vad.pop()
+                                vad_segmented = True
+                    except Exception as exc:  # pylint: disable=broad-except
+                        emit({"type": "log", "message": f"VAD processing error in realtime manual mode: {exc}"})
+                        vad = None
+                # Legacy manual mode: no auto-segmenting, wait for stop command
     except KeyboardInterrupt:
         emit({"type": "complete", "message": "Interrupted by user"})
     except Exception as exc:  # pylint: disable=broad-except

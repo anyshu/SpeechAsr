@@ -962,6 +962,14 @@ body {
     text-align: center;
 }
 
+.setting-hint {
+    font-size: 10px;
+    color: #9ca3af;
+    margin-left: 8px;
+    flex: 1;
+    text-align: right;
+}
+
 .setting-row select:focus,
 .setting-row input:focus {
     outline: none;

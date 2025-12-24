@@ -126,6 +126,8 @@ const modelSection = document.querySelector('.model-section');
 const recordSection = document.querySelector('.record-section');
 const liveSettings = document.getElementById('liveSettings');
 const liveModeSelect = document.getElementById('liveModeSelect');
+const manualRealtimeRow = document.getElementById('manualRealtimeRow');
+const manualRealtimeCheckbox = document.getElementById('manualRealtimeCheckbox');
 const pttBanner = document.getElementById('pttBanner');
 const pttBannerState = document.getElementById('pttBannerState');
 const pttBannerHint = document.getElementById('pttBannerHint');
@@ -266,6 +268,18 @@ function initializeEventListeners() {
             appendLiveLog(enableLiveAutoPaste ? '已开启实时结果自动粘贴' : '已关闭实时结果自动粘贴');
         });
     }
+    // 监听 manualRealtimeCheckbox 的变化
+    if (manualRealtimeCheckbox) {
+        console.log('===== [renderer] manualRealtimeCheckbox event listener attached =====');
+        console.log('[renderer] manualRealtimeCheckbox.checked (initial):', manualRealtimeCheckbox.checked);
+        manualRealtimeCheckbox.addEventListener('change', (e) => {
+            console.log('===== [renderer] manualRealtimeCheckbox CHANGED =====');
+            console.log('[renderer] e.target.checked:', e.target.checked);
+            console.log('[renderer] manualRealtimeCheckbox.checked:', manualRealtimeCheckbox.checked);
+            appendLiveLog(e.target.checked ? '已开启实时分段识别 (VAD+2pass)' : '已关闭实时分段识别 (松手后统一处理)');
+            console.log('===== [renderer] manualRealtimeCheckbox CHANGED END =====');
+        });
+    }
     if (livePasteBtn) {
         livePasteBtn.addEventListener('click', pasteLiveTranscriptToInput);
     }
@@ -356,6 +370,7 @@ function initializeEventListeners() {
         appendLog(`错误: ${error}`, 'error');
     });
     window.electronAPI.onLiveResult((event, payload) => {
+        console.log('[onLiveResult] RAW payload received:', JSON.stringify(payload));
         handleLiveResult(payload);
     });
     window.electronAPI.onModelDownloadProgress((event, data) => {
@@ -1182,16 +1197,33 @@ async function stopLiveTranscribe() {
 
 async function loadLiveModels() {
     if (liveModelsLoaded) {
+        console.log('[renderer] loadLiveModels: skipped (already loaded)');
         return;
     }
     const micLabel = micSelect ? micSelect.options[micSelect.selectedIndex]?.textContent : '';
+    const manualRealtime = manualRealtimeCheckbox?.checked || false;
+    console.log('===== [renderer] loadLiveModels START =====');
+    console.log('[renderer] manualRealtimeCheckbox element:', manualRealtimeCheckbox);
+    console.log('[renderer] manualRealtimeCheckbox.checked:', manualRealtimeCheckbox?.checked);
+    console.log('[renderer] manualRealtimeCheckbox.display:', manualRealtimeCheckbox ? window.getComputedStyle(manualRealtimeRow).display : 'N/A');
+    console.log('[renderer] liveMode:', liveMode);
+    console.log('[renderer] manualRealtime (final value):', manualRealtime);
+    console.log('[renderer] micLabel:', micLabel);
+    console.log('[renderer] numThreads:', parseInt(maxWorkersSelect?.value || '2', 10) || 2);
+    console.log('===== [renderer] loadLiveModels sending IPC =====');
     try {
         const resp = await window.electronAPI.loadLiveModels({
             mode: liveMode,
             micName: micLabel,
+            manualRealtime,
             vad: defaultVadOptions,
             numThreads: parseInt(maxWorkersSelect?.value || '2', 10) || 2
         });
+        console.log('===== [renderer] loadLiveModels IPC response =====');
+        console.log('[renderer] resp.success:', resp?.success);
+        console.log('[renderer] resp.mode:', resp?.mode);
+        console.log('[renderer] resp.reused:', resp?.reused);
+        console.log('===== [renderer] loadLiveModels END =====');
         if (!resp?.success) {
             showError('加载实时模型失败', resp?.message || '未知错误');
             return;
@@ -1454,6 +1486,8 @@ function setPttUI(state) {
 }
 
 function handleLiveResult(payload) {
+    console.log('[handleLiveResult] ENTER', JSON.stringify(payload));
+    console.log('[handleLiveResult] payload.type=', payload?.type, 'payload.stage=', payload?.stage);
     if (!payload || !liveTranscriptBody) return;
     if (payload.type === 'ready') {
         appendLog('两段式实时识别已就绪', 'info');
@@ -1628,9 +1662,22 @@ function handleLiveResult(payload) {
         appendLog(`收到实时结果，段数 ${payload.segments.length}`, 'info');
         appendLiveLog(`收到实时结果，段数 ${payload.segments.length}`);
         // auto 模式的 2pass 替换已在 handleLiveResult 中处理，不需要再调用 autoPasteLiveIfEnabled
-        // manual 模式需要调用 autoPasteLiveIfEnabled 来粘贴结果
+        // manual realtime 模式：直接粘贴当前段落的文本（每个 VAD 段落独立粘贴）
+        console.log(`[DEBUG result] payload.stage=${payload.stage}, liveMode=${liveMode}, isLive=${isLive}`);
+        appendLiveLog(`[DEBUG] payload.stage=${payload.stage}, liveMode=${liveMode}, isLive=${isLive}`);
         if (liveMode !== 'auto') {
-          void autoPasteLiveIfEnabled('live-result');
+          const newText = payload.segments.map((seg) => seg.text || '').join(' ').trim();
+          appendLiveLog(`[DEBUG] newText="${newText}" (length=${newText.length})`);
+          if (newText) {
+            appendLiveLog(`[manual realtime] 粘贴: "${newText}"`);
+            void pasteLiveText(newText, {
+              silent: true,
+              context: '按键录音实时',
+              key: `manual-realtime:${Date.now()}:${newText.length}`,
+              source: 'manual-realtime',
+              combined: newText
+            });
+          }
         }
         if (liveMode === 'manual' && !isLive) {
             setPttUI('done');
@@ -1848,15 +1895,31 @@ function handleGlobalKeyUp(e) {
 }
 
 async function startPttRecording() {
-    if (liveMode !== 'manual') return;
+    console.log('===== [renderer] startPttRecording START =====');
+    console.log('[renderer] liveMode:', liveMode);
+    console.log('[renderer] liveModelsLoaded:', liveModelsLoaded);
+    console.log('[renderer] isPttRecording:', isPttRecording);
+    console.log('[renderer] isRecording:', isRecording);
+    console.log('[renderer] isLive:', isLive);
+    console.log('[renderer] pttStartPromise:', !!pttStartPromise);
+
+    if (liveMode !== 'manual') {
+        console.log('[renderer] startPttRecording: skipped (not manual mode)');
+        return;
+    }
     if (!liveModelsLoaded) {
+        console.log('[renderer] startPttRecording: error (models not loaded)');
         showError('模型未加载', '请先加载实时模型');
         return;
     }
-    if (isPttRecording || isRecording || isLive || pttStartPromise) return;
+    if (isPttRecording || isRecording || isLive || pttStartPromise) {
+        console.log('[renderer] startPttRecording: skipped (already recording)');
+        return;
+    }
     try {
         const granted = await ensureMicPermission(true);
         if (!granted) {
+            console.log('[renderer] startPttRecording: error (mic permission denied)');
             showError('未获得麦克风权限', '请在系统设置中授权麦克风访问后重试');
             return;
         }
@@ -1869,8 +1932,16 @@ async function startPttRecording() {
         }
         resetTwoPassTexts();
         const micLabel = micSelect ? micSelect.options[micSelect.selectedIndex]?.textContent : '';
+        const manualRealtime = manualRealtimeCheckbox?.checked || false;
+        console.log('===== [renderer] startPttRecording checkbox state =====');
+        console.log('[renderer] manualRealtimeCheckbox element:', manualRealtimeCheckbox);
+        console.log('[renderer] manualRealtimeCheckbox.checked:', manualRealtimeCheckbox?.checked);
+        console.log('[renderer] manualRealtimeCheckbox.display:', manualRealtimeCheckbox ? window.getComputedStyle(manualRealtimeRow).display : 'N/A');
+        console.log('[renderer] manualRealtime (final value):', manualRealtime);
+        console.log('[renderer] micLabel:', micLabel);
+        console.log('===== [renderer] startPttRecording sending IPC =====');
         queuedPttStop = false;
-        pttStartPromise = window.electronAPI.startLiveCapture({ mode: 'manual', micName: micLabel });
+        pttStartPromise = window.electronAPI.startLiveCapture({ mode: 'manual', micName: micLabel, manualRealtime });
         const resp = await pttStartPromise;
         if (!resp?.success) {
             showError('无法开始按键录音', resp?.message || '未知错误');
@@ -1973,6 +2044,10 @@ function setLiveMode(mode = 'auto') {
     liveMode = next;
     if (liveModeSelect) {
         liveModeSelect.value = liveMode;
+    }
+    // 控制实时分段识别选项的显示（仅在 manual 模式下显示）
+    if (manualRealtimeRow) {
+        manualRealtimeRow.style.display = liveMode === 'manual' ? 'flex' : 'none';
     }
     window.electronAPI?.armPttOverlay?.(liveMode === 'manual');
     if (isLive) {

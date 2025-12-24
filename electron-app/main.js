@@ -345,8 +345,17 @@ function performPasteShortcutOnMac() {
       return;
     }
 
+    // 策略：先短暂延迟让系统稳定，然后发送粘贴快捷键
+    // 由于物理 Option 键可能干扰 osascript，我们使用原生模块会更可靠
+    // 但作为临时方案，先用 osascript 尝试
     const script =
-      'tell application "System Events" to keystroke "v" using {command down}';
+      'tell application "System Events"\n' +
+      '  -- 发送 Cmd+V 粘贴快捷键\n' +
+      '  -- keyCode 9 = V, with command down\n' +
+      '  key code 9 using command down\n' +
+      'end tell';
+
+    console.log('[SystemInput] Executing paste shortcut...');
 
     let resolved = false;
     const timer = setTimeout(() => {
@@ -379,6 +388,7 @@ function performPasteShortcutOnMac() {
         return;
       }
 
+      console.log('[SystemInput] Paste shortcut executed');
       resolve();
     });
 
@@ -522,10 +532,19 @@ async function pasteTextToFocusedInputOnce(text) {
     return { copied: true, pasted: false };
   }
 
-  await performPasteShortcutOnMac();
-  await sleep(300);
-  console.log('[SystemInput] Paste completed');
-  return { copied: true, pasted: true };
+  // macOS: 尝试使用多种方法粘贴，以确保在修饰键按住时也能工作
+  try {
+    await performPasteShortcutOnMac();
+    await sleep(300);
+    console.log('[SystemInput] Paste completed (primary method)');
+    return { copied: true, pasted: true };
+  } catch (err) {
+    console.warn('[SystemInput] Primary paste method failed:', err?.message || err);
+    // 如果主要方法失败，尝试备用方案：使用 Electron 的 clipboard
+    // 但这需要用户手动按 Cmd+V，所以返回 pasted: false
+    console.log('[SystemInput] Clipboard ready, manual Cmd+V required');
+    return { copied: true, pasted: false };
+  }
 }
 
 const TRIGGER_UNI_KEY = 'Alt'; // 左侧 Option
@@ -1506,6 +1525,11 @@ ipcMain.on('ptt-overlay:test', () => {
 });
 
 function buildLiveSessionRuntime(mode, payload = {}) {
+  console.log('===== [main] buildLiveSessionRuntime START =====');
+  console.log('[main] mode:', mode);
+  console.log('[main] payload?.manualRealtime:', payload?.manualRealtime);
+  console.log('[main] Boolean(payload?.manualRealtime):', Boolean(payload?.manualRealtime));
+
   if (!modelExists()) {
     return { success: false, message: 'SenseVoice 模型未就绪，请先下载' };
   }
@@ -1552,6 +1576,7 @@ function buildLiveSessionRuntime(mode, payload = {}) {
     sampleRate: payload?.sampleRate || speechAsr.activeOptions?.sampleRate || 16000,
     bufferSize: payload?.bufferSize || speechAsr.activeOptions?.bufferSize || 1600,
     pythonPath,
+    manualRealtime: Boolean(payload?.manualRealtime),  // 实时 VAD+2pass 模式开关
     vadMode: vadModelPath ? 'silero' : 'off',
     vad: { silero: sileroCfg },
     modelPaths: {
@@ -1562,6 +1587,8 @@ function buildLiveSessionRuntime(mode, payload = {}) {
     }
   };
 
+  console.log('[main] runtime.manualRealtime (final):', runtime.manualRealtime);
+  console.log('[main] buildLiveSessionRuntime END =====');
   return { success: true, runtime, punctuationReady, vadReady: Boolean(vadModelPath) };
 }
 
@@ -1677,13 +1704,24 @@ ipcMain.handle('open-vad-folder', async () => {
 // 实时转写：加载/释放模型（自动与按键模式）
 ipcMain.handle('live-load-models', async (_event, payload = {}) => {
   const mode = payload?.mode === 'manual' ? 'manual' : 'auto';
+  console.log('===== [main] live-load-models START =====');
+  console.log('[main] payload.mode:', payload?.mode);
+  console.log('[main] normalized mode:', mode);
+  console.log('[main] payload.manualRealtime:', payload?.manualRealtime);
+  console.log('[main] payload.micName:', payload?.micName);
+  console.log('[main] payload.numThreads:', payload?.numThreads);
 
   const built = buildLiveSessionRuntime(mode, payload);
   if (!built.success) {
+    console.log('[main] buildLiveSessionRuntime failed:', built.message);
     return built;
   }
 
   const { runtime, punctuationReady, vadReady } = built;
+  console.log('[main] runtime.manualRealtime:', runtime.manualRealtime);
+  console.log('[main] runtime.device:', runtime.device);
+  console.log('[main] punctuationReady:', punctuationReady);
+  console.log('[main] vadReady:', vadReady);
 
   if (speechAsr.isRunning()) {
     if (speechAsr.isManual() !== (mode === 'manual')) {
@@ -1765,13 +1803,23 @@ ipcMain.handle('live-release-models', async () => {
 
 ipcMain.handle('live-start-capture', async (_event, payload = {}) => {
   const mode = payload?.mode === 'manual' ? 'manual' : 'auto';
+  console.log('===== [main] live-start-capture START =====');
+  console.log('[main] payload.mode:', payload?.mode);
+  console.log('[main] normalized mode:', mode);
+  console.log('[main] payload.manualRealtime:', payload?.manualRealtime);
+  console.log('[main] payload.micName:', payload?.micName);
 
   const built = buildLiveSessionRuntime(mode, payload);
   if (!built.success) {
+    console.log('[main] buildLiveSessionRuntime failed:', built.message);
     return built;
   }
 
   const { runtime, punctuationReady, vadReady } = built;
+  console.log('[main] runtime.manualRealtime:', runtime.manualRealtime);
+  console.log('[main] runtime.device:', runtime.device);
+  console.log('[main] speechAsr.isRunning():', speechAsr.isRunning());
+  console.log('[main] speechAsr.isManual():', speechAsr.isManual());
 
   if (speechAsr.isRunning()) {
     try {
@@ -1781,7 +1829,8 @@ ipcMain.handle('live-start-capture', async (_event, payload = {}) => {
           return { success: false, message: switched?.message || '切换模式失败' };
         }
       }
-      const reuse = await speechAsr.live({ action: 'start', mode, autoStart: true });
+      // 确保 manualRealtime 参数和 modelPaths 都被传递（重启进程时需要完整的 runtime）
+      const reuse = await speechAsr.live({ action: 'start', mode, autoStart: true, manualRealtime: runtime.manualRealtime, modelPaths: runtime.modelPaths });
       liveSessionMode = mode;
       liveModelsLoaded = true;
       return reuse;

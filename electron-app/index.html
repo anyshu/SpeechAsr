@@ -207,6 +207,14 @@
                             <option value="manual">按键录音（仅二次识别）</option>
                         </select>
                     </div>
+                    <div class="setting-row" id="manualRealtimeRow" style="display: none;">
+                        <label for="manualRealtimeCheckbox">实时分段识别</label>
+                        <label class="switch">
+                            <input type="checkbox" id="manualRealtimeCheckbox">
+                            <span class="slider"></span>
+                        </label>
+                        <span class="setting-hint">按下时持续检测语音并识别，而非松手后统一处理</span>
+                    </div>
                     <div class="setting-row">
                         <label for="liveBackendSelect">手动模式后端</label>
                         <select id="liveBackendSelect">

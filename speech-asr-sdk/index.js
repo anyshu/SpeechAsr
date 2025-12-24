@@ -14,6 +14,7 @@ const DEFAULT_OPTIONS = {
     enabled: false,
     backend: 'wasm'
   },
+  manualRealtime: false,
   punctuation: {
     enabled: false,
     modelPath: ''
@@ -169,7 +170,17 @@ class SpeechASR extends EventEmitter {
 
   async startManualRecording(sessionOptions = {}) {
     const autoStart = sessionOptions?.autoStart !== false;
+
+    console.log('===== [SpeechASR] startManualRecording START =====');
+    console.log('[SpeechASR] sessionOptions:', JSON.stringify(sessionOptions, null, 2));
+    console.log('[SpeechASR] this.child:', !!this.child);
+    console.log('[SpeechASR] this.manualMode:', this.manualMode);
+
     if (this.child && this.manualMode) {
+      // 进程已经存在，直接复用（不检查 manualRealtime 变化）
+      // manualRealtime 只在进程首次启动时生效，运行时修改需要重新加载模型
+      console.log('[SpeechASR] startManualRecording: reusing existing process');
+      console.log('[SpeechASR] Note: manualRealtime is locked to initial value, requires model reload to change');
       if (autoStart) {
         this._sendCommand('start');
       }
@@ -183,6 +194,8 @@ class SpeechASR extends EventEmitter {
     runtime.vad = mergeOptions(this.options.vad || {}, sessionOptions.vad || {});
     runtime.punctuation = mergeOptions(this.options.punctuation || {}, sessionOptions.punctuation || {});
     this.activeOptions = runtime;
+    console.log('[SpeechASR] startManualRecording: runtime.manualRealtime=', runtime.manualRealtime);
+    console.log('[SpeechASR] startManualRecording: runtime.device=', runtime.device);
     this.controlled = false;
 
     let resolvedPaths;
@@ -193,9 +206,14 @@ class SpeechASR extends EventEmitter {
     }
 
     const args = this._buildArgs(runtime, resolvedPaths);
-    args.push('--manual-mode');
+    // Note: --manual-mode is already added by _buildArgs() if runtime.manualMode is true
     const env = this._buildEnv(runtime, resolvedPaths);
     const pythonBin = this._resolvePythonPath(runtime);
+
+    console.log('[SpeechASR] startManualRecording: Spawning Python process...');
+    console.log('[SpeechASR] pythonBin:', pythonBin);
+    console.log('[SpeechASR] args:', JSON.stringify(args, null, 2));
+    console.log('[SpeechASR] cwd:', resolvedPaths.workingDir);
 
     try {
       this.child = spawn(pythonBin, args, {
@@ -402,6 +420,7 @@ class SpeechASR extends EventEmitter {
 
   _handleStderr(data) {
     const message = data.toString();
+    console.error('[SpeechASR] STDERR:', message);
     this._emitEvent('log', { type: 'log', message });
   }
 
@@ -412,6 +431,14 @@ class SpeechASR extends EventEmitter {
   async live(options = {}) {
     const action = options.action === 'stop' ? 'stop' : 'start';
     const mode = options.mode === 'manual' ? 'manual' : 'auto';
+    console.log('===== [SpeechASR] live START =====');
+    console.log('[SpeechASR] live options.action:', action);
+    console.log('[SpeechASR] live options.mode:', mode);
+    console.log('[SpeechASR] live options.manualRealtime:', options.manualRealtime);
+    console.log('[SpeechASR] live this.child:', !!this.child);
+    console.log('[SpeechASR] live this.manualMode:', this.manualMode);
+    console.log('[SpeechASR] live this.activeOptions.manualRealtime:', this.activeOptions.manualRealtime);
+
     if (action === 'stop') {
       if (!this.child) return { success: true };
       if (this.manualMode) return this.stopManualRecording();
@@ -425,6 +452,11 @@ class SpeechASR extends EventEmitter {
         const switched = this._switchMode(mode);
         if (!switched.success) return switched;
       }
+      // 注意：不在录音过程中检测 manualRealtime 的变化
+      // 这个参数只在进程首次启动时生效，录音过程中改变它会导致录音中断
+      // 用户需要重新加载模型才能应用新的 manualRealtime 设置
+      console.log('[SpeechASR] live: reusing existing process, manualRealtime is locked to:', this.activeOptions.manualRealtime);
+      console.log('[SpeechASR] live: Note: to change manualRealtime, release and reload models');
       return this.startCapture();
     }
     if (mode === 'manual') {
@@ -457,6 +489,7 @@ class SpeechASR extends EventEmitter {
   }
 
   _routePayload(payload) {
+    console.log('[SDK _routePayload] payload.type=', payload?.type, 'payload.stage=', payload?.stage);
     switch (payload?.type) {
       case 'ready':
         this._emitEvent('ready', payload);
@@ -465,6 +498,7 @@ class SpeechASR extends EventEmitter {
         this._emitEvent('partial', { type: 'first-pass', text: payload.text || '' });
         break;
       case 'result':
+        console.log('[SDK _routePayload] RESULT payload:', JSON.stringify(payload));
         this._emitEvent('two-pass-result', payload);
         this._emitEvent('result', payload);
         break;
@@ -584,6 +618,12 @@ class SpeechASR extends EventEmitter {
 
     if (runtime.manualMode) {
       args.push('--manual-mode');
+      if (runtime.manualRealtime) {
+        args.push('--manual-realtime');
+        console.log('[SpeechASR] _buildArgs: manualRealtime enabled, adding --manual-realtime flag');
+      } else {
+        console.log('[SpeechASR] _buildArgs: manualRealtime disabled (legacy mode)');
+      }
     } else if (runtime.firstDecodingMethod) {
       args.push('--first-decoding-method', runtime.firstDecodingMethod);
     }
