@@ -128,7 +128,7 @@ class SpeechASR extends EventEmitter {
     try {
       this.child = spawn(pythonBin, args, {
         cwd: resolvedPaths.workingDir,
-        stdio: [needsControl ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+        stdio: ['pipe', 'pipe', 'pipe'],
         env
       });
     } catch (err) {
@@ -363,9 +363,13 @@ class SpeechASR extends EventEmitter {
 
   async stop() {
     if (this.child) {
-      if (this.manualMode || this.controlled) {
+      // Always try to send quit command if stdin is available, even in auto mode
+      // This allows Python to clean up gracefully (close audio streams, join decoder thread, etc.)
+      if (this.child.stdin) {
         try {
           this._sendCommand('quit');
+          // Give Python a short time to clean up gracefully
+          await new Promise(resolve => setTimeout(resolve, 500));
         } catch {
           // Best effort; fall back to kill
         }

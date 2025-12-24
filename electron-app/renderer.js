@@ -1479,6 +1479,7 @@ function handleLiveResult(payload) {
             if (deltaText) {
                 const key = `auto-first-pass:${text.length}`;
                 if (key !== lastAutoPasteKey) {
+                    appendLiveLog(`[1pass] 完整文本: "${text}", 增量: "${deltaText}" (${deltaText.length} 字符)`);
                     pasteLiveText(deltaText, {
                         silent: true,
                         context: '1pass 实时',
@@ -1560,25 +1561,39 @@ function handleLiveResult(payload) {
             if (liveMode === 'auto' && enableLiveAutoPaste && combinedText) {
                 const key = `auto-second-pass:${combinedText.length}`;
                 if (key !== lastAutoPasteKey) {
-                    // 检查是否有之前粘贴的 1pass 增量需要替换
-                    if (lastPastedFirstPassDeltaLength > 0) {
-                        appendLiveLog(`[2pass] 自动选中并替换 1pass 增量 (${lastPastedFirstPassDeltaLength} 字符)`);
-                        if (window.electronAPI?.replaceFirstPassWithSecond) {
-                            window.electronAPI.replaceFirstPassWithSecond({
-                                selectLength: lastPastedFirstPassDeltaLength,
-                                secondPassText: combinedText
-                            }).then(result => {
-                                console.log('[2pass auto-replace] Result:', result);
-                                if (!result?.success) {
-                                    appendLiveLog(`[2pass 替换失败] ${result?.message || '未知错误'}`);
-                                }
-                            }).catch(err => {
-                                console.error('[2pass auto-replace] Error:', err);
-                                appendLiveLog(`[2pass 替换错误] ${err?.message || err}`);
-                            });
-                        }
+                    // 策略：选中整个 1pass 文本长度，用完整的 2pass 文本替换
+                    // 因为 1pass 是增量粘贴的，所以需要选中整个 1pass 来替换
+                    const selectLength = lastPastedFirstPassText.length;
+
+                    // 给 2pass 内容加上标签以便观察
+                    const taggedSecondPassText = `<2pass>${combinedText}</2pass>`;
+
+                    appendLiveLog(`[2pass] 选中整个1pass (${selectLength}字): "${lastPastedFirstPassText}"`);
+                    appendLiveLog(`[2pass] 替换为: "${taggedSecondPassText}"`);
+
+                    if (selectLength > 0 && window.electronAPI?.replaceFirstPassWithSecond) {
+                        window.electronAPI.replaceFirstPassWithSecond({
+                            selectLength: selectLength,
+                            secondPassText: taggedSecondPassText
+                        }).then(result => {
+                            console.log('[2pass auto-replace] Result:', result);
+                            if (result?.success) {
+                                // 替换成功，本轮结束，重置状态以便下一轮重新开始
+                                lastPastedFirstPassText = '';
+                                lastPastedFirstPassDeltaLength = 0;
+                                lastPastedCombinedText = '';
+                                lastAutoPasteKey = '';
+                                appendLiveLog(`[2pass] 替换成功，状态已重置`);
+                            } else {
+                                appendLiveLog(`[2pass 替换失败] ${result?.message || '未知错误'}`);
+                            }
+                        }).catch(err => {
+                            console.error('[2pass auto-replace] Error:', err);
+                            appendLiveLog(`[2pass 替换错误] ${err?.message || err}`);
+                        });
                     } else {
-                        // 没有需要替换的 1pass 内容，直接粘贴 2pass 结果
+                        // 没有 1pass 可替换，直接粘贴 2pass（这种情况通常意味着这轮刚开始）
+                        appendLiveLog(`[2pass] 直接粘贴: "${combinedText}"`);
                         pasteLiveText(combinedText, {
                             silent: true,
                             context: '自动转写',
@@ -1586,6 +1601,9 @@ function handleLiveResult(payload) {
                             source: 'auto-second-pass',
                             combined: combinedText
                         });
+                        // 粘贴后重置状态（pasteLiveText 会更新 lastPastedCombinedText 和 lastAutoPasteKey）
+                        lastPastedFirstPassText = '';
+                        lastPastedFirstPassDeltaLength = 0;
                     }
                 }
             }
@@ -1609,7 +1627,11 @@ function handleLiveResult(payload) {
         }
         appendLog(`收到实时结果，段数 ${payload.segments.length}`, 'info');
         appendLiveLog(`收到实时结果，段数 ${payload.segments.length}`);
-        void autoPasteLiveIfEnabled('live-result');
+        // auto 模式的 2pass 替换已在 handleLiveResult 中处理，不需要再调用 autoPasteLiveIfEnabled
+        // manual 模式需要调用 autoPasteLiveIfEnabled 来粘贴结果
+        if (liveMode !== 'auto') {
+          void autoPasteLiveIfEnabled('live-result');
+        }
         if (liveMode === 'manual' && !isLive) {
             setPttUI('done');
         }
@@ -1633,26 +1655,9 @@ function resetLiveTranscriptStore(options = {}) {
     liveSegmentKeys.clear();
     lastAutoPasteKey = '';
     lastPastedCombinedText = '';
-}
-
-function addLiveSegments(segments = []) {
-    segments.forEach((seg) => {
-        const start = Number(seg.start_time) || 0;
-        const end = Number(seg.end_time) || 0;
-        const text = seg.text || '';
-        const speaker = seg.speaker || '';
-        const key = `${start}-${end}-${text}-${speaker}`;
-        if (liveSegmentKeys.has(key)) return;
-        liveSegmentKeys.add(key);
-        liveTranscriptSegments.push({ start, end, text, speaker });
-    });
-}
-
-function resetLiveTranscriptStore(options = {}) {
-    const { preserveResults = false } = options;
-    if (preserveResults) return;
-    liveTranscriptSegments = [];
-    liveSegmentKeys.clear();
+    lastPastedFirstPassText = '';
+    lastPastedFirstPassDeltaLength = 0;
+    lastPastedSecondPassText = '';
 }
 
 function addLiveSegments(segments = []) {
@@ -1696,6 +1701,8 @@ function updateSecondPassDisplay(text) {
 let lastPastedFirstPassText = '';
 // 记录最后一次粘贴的 1pass 增量长度（用于 Shift+Left 选中）
 let lastPastedFirstPassDeltaLength = 0;
+// 记录最后一次粘贴的 2pass 完整内容（用于计算 2pass 增量）
+let lastPastedSecondPassText = '';
 
 function replaceFirstPassWithSecond() {
     console.log('[replaceFirstPassWithSecond] Called, secondPassText:', secondPassText?.textContent);

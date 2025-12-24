@@ -401,74 +401,105 @@ async function selectAndReplaceText(selectLength, secondPassText) {
     throw new Error('Select length and second pass text are required');
   }
 
-  // 计算实际需要选中的字符数（限制最多选中 100 个字符）
-  const maxShifts = Math.min(selectLength, 100);
+  console.log(`[SelectAndReplace] 选中 ${selectLength} 字符，2pass [${Number(selectLength)}]文本: "${secondPassText}"`);
 
-  console.log(`[SelectAndReplace] Selecting ${maxShifts} characters to the left...`);
+  // 设置标志，阻止新的 1pass 粘贴操作
+  isSelectAndReplaceInProgress = true;
 
-  // 先复制 2pass 内容到剪贴板
-  clipboard.writeText(secondPassText);
-  await sleep(100);
+  try {
+    // 等待 pasteOnceQueue 中的所有操作完成，然后重置队列，丢弃积压的 1pass 粘贴
+    await pasteOnceQueue;
+    pasteOnceQueue = Promise.resolve(); // 重置队列，丢弃积压的操作
 
-  // 构建多行 AppleScript（使用数组拼接避免转义问题）
-  const appleScriptLines = [
-    'tell application "System Events"',
-    `  repeat ${maxShifts} times`,
-    '    keystroke (ASCII character 28) using {shift down}',
-    '  end repeat',
-    '  delay 0.1',
-    '  keystroke (ASCII character 127)',
-    '  delay 0.05',
-    '  keystroke "v" using {command down}',
-    'end tell'
-  ];
+    // 先复制 2pass 内容到剪贴板
+    clipboard.writeText(secondPassText);
+    await sleep(100);
 
-  const appleScript = appleScriptLines.join('\n');
+    // 如果选中的字符数很多（>200），使用 Command+A 全选更快
+    const useSelectAll = selectLength > 200;
 
-  return new Promise((resolve, reject) => {
-    let resolved = false;
-    const timer = setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        reject(new Error('Select and replace timed out'));
-      }
-    }, 10000);
+    // 构建多行 AppleScript（使用数组拼接避免转义问题）
+    const appleScriptLines = [
+      'tell application "System Events"'
+    ];
 
-    const child = execFile('osascript', ['-e', appleScript], (error, stdout, stderr) => {
-      if (resolved) return;
-      resolved = true;
-      clearTimeout(timer);
+    if (useSelectAll) {
+      // 使用全选
+      appleScriptLines.push('  keystroke "a" using {command down}');
+    } else {
+      // 使用 Shift+Left 逐字符选中
+      appleScriptLines.push(`  repeat ${selectLength} times`);
+      appleScriptLines.push('    keystroke (ASCII character 28) using {shift down}');
+      appleScriptLines.push('  end repeat');
+    }
 
-      if (error) {
-        const message = String(error?.message || error);
-        console.warn('[SelectAndReplace] Error:', message);
-        console.warn('[SelectAndReplace] stderr:', stderr);
-        if (message.includes('Not authorized') || message.includes('(-1743)')) {
-          console.warn(
-            '[SelectAndReplace] macOS 自动化权限未授权：请到 系统设置 > 隐私与安全性 > 辅助功能 中允许此应用'
-          );
+    appleScriptLines.push(
+      '  delay 0.05',
+      '  keystroke (ASCII character 127)',  // Delete
+      '  delay 0.05',
+      '  keystroke "v" using {command down}',  // Paste
+      'end tell'
+    );
+
+    const appleScript = appleScriptLines.join('\n');
+
+    await new Promise((resolve, reject) => {
+      let resolved = false;
+      const timer = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          reject(new Error('Select and replace timed out'));
         }
-        reject(error);
-        return;
-      }
+      }, 10000);
 
-      if (stdout?.trim()) {
-        console.log('[SelectAndReplace] stdout:', stdout.trim());
-      }
-      console.log('[SelectAndReplace] Completed successfully');
-      resolve();
-    });
+      const child = execFile('osascript', ['-e', appleScript], (error, stdout, stderr) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
 
-    child.on('error', (err) => {
-      if (resolved) return;
-      resolved = true;
-      clearTimeout(timer);
-      reject(err);
+        if (error) {
+          const message = String(error?.message || error);
+          console.warn('[SelectAndReplace] Error:', message);
+          console.warn('[SelectAndReplace] stderr:', stderr);
+          if (message.includes('Not authorized') || message.includes('(-1743)')) {
+            console.warn(
+              '[SelectAndReplace] macOS 自动化权限未授权：请到 系统设置 > 隐私与安全性 > 辅助功能 中允许此应用'
+            );
+          }
+          reject(error);
+          return;
+        }
+
+        if (stdout?.trim()) {
+          console.log('[SelectAndReplace] stdout:', stdout.trim());
+        }
+        console.log('[SelectAndReplace] Completed successfully');
+        resolve();
+      });
+
+      child.on('error', (err) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
+        reject(err);
+      });
     });
-  });
+  } finally {
+    // 无论成功或失败，都要重置标志
+    isSelectAndReplaceInProgress = false;
+  }
 }
 
 let pasteOnceQueue = Promise.resolve();
+
+// 标志：2pass 替换是否正在进行（在此期间阻止 1pass 粘贴）
+let isSelectAndReplaceInProgress = false;
+
+// 重置粘贴队列（用于停止录音时清空待处理的粘贴任务）
+function resetPasteQueue() {
+  pasteOnceQueue = Promise.resolve();
+  console.log('[PasteQueue] Queue reset');
+}
 
 async function pasteTextToFocusedInputOnce(text) {
   const normalized = typeof text === 'string' ? text : '';
@@ -1339,6 +1370,12 @@ ipcMain.handle('system-input:paste', async (_event, text) => {
     return { success: false, message: '没有可粘贴的内容' };
   }
 
+  // 如果 2pass 替换正在进行，返回错误，让调用端知道粘贴被跳过
+  if (isSelectAndReplaceInProgress) {
+    console.log('[Paste] Skipped (2pass in progress):', normalized.slice(0, 30));
+    return { success: false, message: '2pass替换进行中，跳过1pass粘贴', skipped: true };
+  }
+
   let outcome = { success: true, copied: false, pasted: false };
 
   pasteOnceQueue = pasteOnceQueue
@@ -1360,6 +1397,7 @@ ipcMain.handle('system-input:paste', async (_event, text) => {
 });
 
 // 选中并替换文本：用 2pass 内容替换外部输入框中的 1pass 增量内容
+// 注意：此操作不使用 pasteOnceQueue，而是立即执行，因为 2pass 需要尽快替换 1pass
 ipcMain.handle('system-input:select-and-replace', async (_event, payload) => {
   console.log('[system-input:select-and-replace] Received payload:', payload);
   const { selectLength, secondPassText } = payload || {};
@@ -1381,25 +1419,20 @@ ipcMain.handle('system-input:select-and-replace', async (_event, payload) => {
   }
 
   console.log('[system-input:select-and-replace] Calling selectAndReplaceText...');
-  let outcome = { success: true, replaced: false };
 
-  pasteOnceQueue = pasteOnceQueue
-    .then(async () => {
-      const result = await selectAndReplaceText(normalizedLength, normalizedSecond);
-      outcome = { ...result, success: true, replaced: true };
-    })
-    .catch((error) => {
-      console.error('[system-input:select-and-replace] Error:', error);
-      outcome = {
-        success: false,
-        message: error?.message || String(error),
-        replaced: false
-      };
-    });
-
-  await pasteOnceQueue;
-  console.log('[system-input:select-and-replace] Final outcome:', outcome);
-  return outcome;
+  try {
+    // 直接执行，不使用队列，避免与 1pass 粘贴队列冲突
+    const result = await selectAndReplaceText(normalizedLength, normalizedSecond);
+    console.log('[system-input:select-and-replace] Final outcome:', { success: true, replaced: true });
+    return { success: true, replaced: true };
+  } catch (error) {
+    console.error('[system-input:select-and-replace] Error:', error);
+    return {
+      success: false,
+      message: error?.message || String(error),
+      replaced: false
+    };
+  }
 });
 
 ipcMain.handle('mic-permission-status', async () => {
@@ -1713,6 +1746,8 @@ ipcMain.handle('live-load-models', async (_event, payload = {}) => {
 
 ipcMain.handle('live-release-models', async () => {
   try {
+    // 释放模型时重置粘贴队列
+    resetPasteQueue();
     if (speechAsr.isRunning()) {
       if (speechAsr.isManual()) {
         await speechAsr.stopManualSession();
@@ -1800,6 +1835,8 @@ ipcMain.handle('live-stop-capture', async (_event, payload = {}) => {
     if (mode === 'manual' && payload?.source !== 'key-up') {
       return { success: false, message: '仅按键松开时可结束按键录音' };
     }
+    // 停止时重置粘贴队列，避免等待队列中积压的粘贴任务
+    resetPasteQueue();
     if (!speechAsr.isRunning()) {
       return { success: true };
     }
