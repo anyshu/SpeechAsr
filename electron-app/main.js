@@ -391,6 +391,83 @@ function performPasteShortcutOnMac() {
   });
 }
 
+// 选中并替换文本：先通过 Shift+Left 选中 1pass 增量内容，然后输入 2pass 替换
+async function selectAndReplaceText(selectLength, secondPassText) {
+  if (process.platform !== 'darwin') {
+    throw new Error('Select and replace is only supported on macOS');
+  }
+
+  if (!selectLength || !secondPassText) {
+    throw new Error('Select length and second pass text are required');
+  }
+
+  // 计算实际需要选中的字符数（限制最多选中 100 个字符）
+  const maxShifts = Math.min(selectLength, 100);
+
+  console.log(`[SelectAndReplace] Selecting ${maxShifts} characters to the left...`);
+
+  // 先复制 2pass 内容到剪贴板
+  clipboard.writeText(secondPassText);
+  await sleep(100);
+
+  // 构建多行 AppleScript（使用数组拼接避免转义问题）
+  const appleScriptLines = [
+    'tell application "System Events"',
+    `  repeat ${maxShifts} times`,
+    '    keystroke (ASCII character 28) using {shift down}',
+    '  end repeat',
+    '  delay 0.1',
+    '  keystroke (ASCII character 127)',
+    '  delay 0.05',
+    '  keystroke "v" using {command down}',
+    'end tell'
+  ];
+
+  const appleScript = appleScriptLines.join('\n');
+
+  return new Promise((resolve, reject) => {
+    let resolved = false;
+    const timer = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        reject(new Error('Select and replace timed out'));
+      }
+    }, 10000);
+
+    const child = execFile('osascript', ['-e', appleScript], (error, stdout, stderr) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timer);
+
+      if (error) {
+        const message = String(error?.message || error);
+        console.warn('[SelectAndReplace] Error:', message);
+        console.warn('[SelectAndReplace] stderr:', stderr);
+        if (message.includes('Not authorized') || message.includes('(-1743)')) {
+          console.warn(
+            '[SelectAndReplace] macOS 自动化权限未授权：请到 系统设置 > 隐私与安全性 > 辅助功能 中允许此应用'
+          );
+        }
+        reject(error);
+        return;
+      }
+
+      if (stdout?.trim()) {
+        console.log('[SelectAndReplace] stdout:', stdout.trim());
+      }
+      console.log('[SelectAndReplace] Completed successfully');
+      resolve();
+    });
+
+    child.on('error', (err) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
 let pasteOnceQueue = Promise.resolve();
 
 async function pasteTextToFocusedInputOnce(text) {
@@ -1279,6 +1356,49 @@ ipcMain.handle('system-input:paste', async (_event, text) => {
     });
 
   await pasteOnceQueue;
+  return outcome;
+});
+
+// 选中并替换文本：用 2pass 内容替换外部输入框中的 1pass 增量内容
+ipcMain.handle('system-input:select-and-replace', async (_event, payload) => {
+  console.log('[system-input:select-and-replace] Received payload:', payload);
+  const { selectLength, secondPassText } = payload || {};
+  const normalizedLength = Number(selectLength) || 0;
+  const normalizedSecond = typeof secondPassText === 'string' ? secondPassText : '';
+
+  console.log('[system-input:select-and-replace] Normalized values:', {
+    selectLength: normalizedLength,
+    secondPassText: normalizedSecond.slice(0, 50) + (normalizedSecond.length > 50 ? '...' : '')
+  });
+
+  if (normalizedLength <= 0) {
+    console.log('[system-input:select-and-replace] Invalid selectLength');
+    return { success: false, message: '没有可替换的 1pass 内容' };
+  }
+  if (!normalizedSecond.trim()) {
+    console.log('[system-input:select-and-replace] Empty secondPassText');
+    return { success: false, message: '没有可替换的 2pass 内容' };
+  }
+
+  console.log('[system-input:select-and-replace] Calling selectAndReplaceText...');
+  let outcome = { success: true, replaced: false };
+
+  pasteOnceQueue = pasteOnceQueue
+    .then(async () => {
+      const result = await selectAndReplaceText(normalizedLength, normalizedSecond);
+      outcome = { ...result, success: true, replaced: true };
+    })
+    .catch((error) => {
+      console.error('[system-input:select-and-replace] Error:', error);
+      outcome = {
+        success: false,
+        message: error?.message || String(error),
+        replaced: false
+      };
+    });
+
+  await pasteOnceQueue;
+  console.log('[system-input:select-and-replace] Final outcome:', outcome);
   return outcome;
 });
 

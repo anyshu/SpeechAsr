@@ -840,6 +840,12 @@ body {
     overflow-y: auto;
     user-select: text;
     cursor: text;
+    outline: none;
+}
+
+.pass-text:focus {
+    background: rgba(59, 130, 246, 0.05);
+    border-radius: 4px;
 }
 
 .pass-text.final-pass {

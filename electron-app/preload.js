@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showError: (title, content) => ipcRenderer.invoke('show-error', title, content),
   showMessage: (title, content) => ipcRenderer.invoke('show-message', title, content),
   pasteTextToFocusedInput: (text) => ipcRenderer.invoke('system-input:paste', text),
+  replaceFirstPassWithSecond: (payload) => ipcRenderer.invoke('system-input:select-and-replace', payload),
   
   // 文件保存
   saveFile: (content, defaultName) => ipcRenderer.invoke('save-file', content, defaultName),
