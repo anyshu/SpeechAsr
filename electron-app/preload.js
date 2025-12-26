@@ -86,5 +86,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onStreamingModelDownloadProgress: (callback) => ipcRenderer.on('streaming-download-progress', callback),
   onVadModelDownloadProgress: (callback) => ipcRenderer.on('vad-download-progress', callback),
   getMicPermissionStatus: () => ipcRenderer.invoke('mic-permission-status'),
-  requestMicPermission: () => ipcRenderer.invoke('mic-permission-request')
+  requestMicPermission: () => ipcRenderer.invoke('mic-permission-request'),
+
+  // LLM API
+  llmProcess: (text, prefix) => ipcRenderer.invoke('llm-process', text, prefix),
+  getCurrentSelection: () => ipcRenderer.invoke('get-current-selection')
 }); 

@@ -128,6 +128,8 @@ const liveSettings = document.getElementById('liveSettings');
 const liveModeSelect = document.getElementById('liveModeSelect');
 const manualRealtimeRow = document.getElementById('manualRealtimeRow');
 const manualRealtimeCheckbox = document.getElementById('manualRealtimeCheckbox');
+const enableLlmRow = document.getElementById('enableLlmRow');
+const enableLlmCheckbox = document.getElementById('enableLlmCheckbox');
 const pttBanner = document.getElementById('pttBanner');
 const pttBannerState = document.getElementById('pttBannerState');
 const pttBannerHint = document.getElementById('pttBannerHint');
@@ -1631,6 +1633,63 @@ function handleLiveResult(payload) {
             updateSecondPassDisplay(combinedText);
             appendLiveLog(`第二遍完成: ${combinedText}`);
 
+            // 手动模式下，如果启用了 LLM，先调用 LLM 处理
+            if (liveMode === 'manual' && enableLlmCheckbox?.checked && combinedText) {
+                appendLiveLog(`[LLM] 正在调用 AI 助手处理...`);
+
+                // 先尝试获取用户当前选中的文本作为 prefix
+                window.electronAPI?.getCurrentSelection?.().then(selectionResult => {
+                    const prefix = selectionResult?.success ? selectionResult.text : null;
+                    if (prefix) {
+                        appendLiveLog(`[LLM] 检测到选中文本: "${prefix.slice(0, 50)}${prefix.length > 50 ? '...' : ''}"`);
+                    }
+
+                    return window.electronAPI?.llmProcess?.(combinedText, prefix);
+                }).then(result => {
+                    if (result?.success && result?.text) {
+                        const processedText = result.text;
+                        appendLiveLog(`[LLM] AI 助手处理结果: ${processedText}`);
+                        updateSecondPassDisplay(processedText);
+                        // 使用 LLM 处理后的结果进行粘贴
+                        return pasteLiveText(processedText, {
+                            silent: true,
+                            context: 'LLM 助手',
+                            key: `llm-processed:${processedText.length}`,
+                            source: 'llm-processed',
+                            combined: processedText
+                        });
+                    } else {
+                        appendLiveLog(`[LLM] 处理失败: ${result?.message || '未知错误'}`);
+                        // LLM 失败时，仍然使用原始 2pass 结果
+                        return pasteLiveText(combinedText, {
+                            silent: true,
+                            context: '2pass 结果',
+                            key: `second-pass:${combinedText.length}`,
+                            source: 'second-pass',
+                            combined: combinedText
+                        });
+                    }
+                }).catch(err => {
+                    console.error('[LLM] Error:', err);
+                    appendLiveLog(`[LLM] 调用错误: ${err?.message || err}`);
+                    // 出错时，仍然使用原始 2pass 结果
+                    return pasteLiveText(combinedText, {
+                        silent: true,
+                        context: '2pass 结果',
+                        key: `second-pass:${combinedText.length}`,
+                        source: 'second-pass',
+                        combined: combinedText
+                    });
+                }).then(() => {
+                    // 粘贴完成后，设置 UI 状态为 done，隐藏小窗
+                    if (!isPttRecording) {
+                        setPttUI('done');
+                        updateStatus('按键识别完成');
+                    }
+                });
+                return; // 等待 LLM 处理完成
+            }
+
             // 自动模式下启用自动粘贴
             if (liveMode === 'auto' && enableLiveAutoPaste && combinedText) {
                 const key = `auto-second-pass:${combinedText.length}`;
@@ -2102,6 +2161,10 @@ function setLiveMode(mode = 'auto') {
     // 控制实时分段识别选项的显示（仅在 manual 模式下显示）
     if (manualRealtimeRow) {
         manualRealtimeRow.style.display = liveMode === 'manual' ? 'flex' : 'none';
+    }
+    // 控制 LLM 选项的显示（仅在 manual 模式下显示）
+    if (enableLlmRow) {
+        enableLlmRow.style.display = liveMode === 'manual' ? 'flex' : 'none';
     }
     window.electronAPI?.armPttOverlay?.(liveMode === 'manual');
     if (isLive) {

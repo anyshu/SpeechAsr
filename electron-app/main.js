@@ -32,6 +32,14 @@ const VAD_MODEL_URL = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/a
 const VAD_MODEL_FILENAME = 'silero_vad.onnx';
 const ICON_PATH = path.join(__dirname, 'ok.png');
 const APP_NAME = '西瓜说';
+
+// LLM 配置
+const LLM_CONFIG = {
+  apiKey: 'sk-Frhn6R8bKvV54qDFOx4S7U2YT7tMTB4yFHHSkHIKuASSPrCk',
+  apiUrl: 'https://next-api.fazhiplus.com/v1',
+  model: 'deepseek-v3.1',
+  systemPrompt: '你是一个AI语音助手，帮助用户处理输入的内容。输出用户的需求结果，不要包含任何多余的说明文字。'
+};
 function getIconPath() {
   // 在打包后优先使用 resources 目录下的同名文件
   if (app.isPackaged) {
@@ -561,7 +569,7 @@ function setupGlobalPttHook() {
   }
 
   const started = hookInstance.start({
-    enableClipboard: false,
+    enableClipboard: true,  // 启用 clipboard 回退以获取其他应用的选中文本
     selectionPassiveMode: true
   });
 
@@ -1516,6 +1524,116 @@ ipcMain.handle('read-file', async (event, filePath) => {
     return fs.readFileSync(filePath);
   } catch (error) {
     throw new Error(`读取文件失败: ${error.message}`);
+  }
+});
+
+// LLM API 调用
+async function callLlmApi(text, prefix = null) {
+  const url = new URL(`${LLM_CONFIG.apiUrl}/chat/completions`);
+
+  // 获取当前时间
+  const now = new Date();
+  const timeString = now.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+
+  // 在 system prompt 后面追加当前时间
+  const systemPromptWithTime = `${LLM_CONFIG.systemPrompt}\n\n当前时间：${timeString}`;
+
+  // 构建用户消息：如果有 prefix，将其作为上下文信息
+  let userContent = text;
+  if (prefix && prefix.trim()) {
+    userContent = `【用户当前选中的文本】\n${prefix}\n\n【语音识别内容】\n${text}\n\n请根据上下文理解语音内容，并给出合适的回复。`;
+  }
+
+  const payload = {
+    model: LLM_CONFIG.model,
+    messages: [
+      { role: 'system', content: systemPromptWithTime },
+      { role: 'user', content: userContent }
+    ]
+  };
+
+  console.log('[LLM] Calling API with text:', text.slice(0, 100));
+  if (prefix) {
+    console.log('[LLM] With prefix (selected text):', prefix.slice(0, 100));
+  }
+
+  return new Promise((resolve, reject) => {
+    const https = require('https');
+    const urlOptions = {
+      hostname: url.hostname,
+      port: url.port || (url.protocol === 'https:' ? 443 : 80),
+      path: url.pathname + url.search,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${LLM_CONFIG.apiKey}`
+      }
+    };
+
+    const req = https.request(urlOptions, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        if (res.statusCode !== 200) {
+          reject(new Error(`LLM API 返回错误: ${res.statusCode} - ${data}`));
+          return;
+        }
+        try {
+          const json = JSON.parse(data);
+          const content = json?.choices?.[0]?.message?.content || text;
+          console.log('[LLM] Response:', content.slice(0, 100));
+          resolve({ success: true, text: content });
+        } catch (err) {
+          reject(new Error(`LLM API 响应解析失败: ${err.message}`));
+        }
+      });
+    });
+
+    req.on('error', (err) => {
+      reject(new Error(`LLM API 请求失败: ${err.message}`));
+    });
+
+    req.write(JSON.stringify(payload));
+    req.end();
+  });
+}
+
+// 处理 LLM 请求的 IPC
+ipcMain.handle('llm-process', async (event, text, prefix = null) => {
+  if (!text || !text.trim()) {
+    return { success: false, message: '输入内容为空' };
+  }
+
+  try {
+    const result = await callLlmApi(text, prefix);
+    return result;
+  } catch (error) {
+    console.error('[LLM] Error:', error);
+    return { success: false, message: error.message };
+  }
+});
+
+// 获取当前选择的文本
+ipcMain.handle('get-current-selection', async () => {
+  if (!globalPttHook) {
+    console.log('[Selection] Hook not initialized');
+    return { success: false, message: 'Selection hook 未初始化' };
+  }
+
+  try {
+    console.log('[Selection] Attempting to get current selection...');
+    const selection = globalPttHook.getCurrentSelection();
+    console.log('[Selection] Raw result:', selection);
+
+    if (selection && selection.text && selection.text.trim()) {
+      console.log('[Selection] Current selection:', selection.text.slice(0, 100));
+      return { success: true, text: selection.text };
+    }
+    console.log('[Selection] No valid text found in selection');
+    return { success: false, message: '没有选中的文本' };
+  } catch (error) {
+    console.error('[Selection] Error:', error);
+    return { success: false, message: error.message };
   }
 });
 
