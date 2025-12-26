@@ -1478,43 +1478,15 @@ ipcMain.handle('get-current-selection', async () => {
 });
 
 ipcMain.on('ptt-overlay:update', (_event, payload) => {
-  if (!payload) return;
-  const { state, message, hint, autoHideMs, lock } = payload;
-  console.log('[ptt-overlay:update] Received:', { state, message, hint, overlayTimer: !!overlayTimer, overlayMessageCache });
-  if (state === 'idle') {
-    hideOverlay(true);
-    return;
-  }
-  if (state === 'recording') {
-    // If timer already running, update cached message only to avoid
-    // restarting timer; otherwise start it.
-    if (overlayTimer) {
-      overlayMessageCache = message || overlayMessageCache || '';
-      console.log('[ptt-overlay:update] Updated cache:', overlayMessageCache);
-      // immediately send an update so overlay displays new message
-      const formatted = formatDurationMs(Date.now() - overlayStartTime);
-      const durationHint = `按键录音 ${formatted}`;
-      sendOverlayPayload({ state: 'recording', message: overlayMessageCache || '', hint: durationHint, lock: Boolean(lock) });
-      return;
-    }
-    startOverlayTimer(message, hint, Boolean(lock));
-    return;
-  }
-  stopOverlayTimer();
-  updateOverlay(state || 'recording', message, hint, {
-    autoHideMs,
-    lock: Boolean(lock)
-  });
+  // 已迁移至 live-transcribe/main/handlers.js
 });
 
-ipcMain.on('ptt-overlay:hide', () => hideOverlay());
+ipcMain.on('ptt-overlay:hide', () => {
+  // 已迁移至 live-transcribe/main/handlers.js
+});
 
 ipcMain.on('ptt-overlay:arm', (_event, enabled) => {
-  overlayArmed = Boolean(enabled);
-  if (!overlayArmed) {
-    overlayLocked = false;
-    hideOverlay(true);
-  }
+  // 已迁移至 live-transcribe/main/handlers.js
 });
 
 function buildLiveSessionRuntime(mode, payload = {}) {

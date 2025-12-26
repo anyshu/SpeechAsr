@@ -89,6 +89,9 @@ const liveAppApi = {
   pasteTextToFocusedInput: (text) => ipcRenderer.invoke('system-input:paste', text),
   replaceFirstPassWithSecond: (payload) => ipcRenderer.invoke('system-input:select-and-replace', payload),
 
+  // LLM 处理
+  llmProcess: (text, prefix) => ipcRenderer.invoke('llm-process', text, prefix),
+
   // 其他状态
   getModeDefaults: () => ipcRenderer.invoke('get-mode-defaults'),
   getAppMode: () => ipcRenderer.invoke('get-app-mode'),

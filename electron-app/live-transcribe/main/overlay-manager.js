@@ -55,11 +55,8 @@ function getIconImage() {
  */
 function ensureOverlayWindow() {
   if (overlayWindow && !overlayWindow.isDestroyed()) {
-    console.log('[LiveTranscribe] Reusing existing overlay window');
     return overlayWindow;
   }
-
-  console.log('[LiveTranscribe] Creating new overlay window...');
 
   overlayWindow = new BrowserWindow({
     width: 360,
@@ -87,13 +84,11 @@ function ensureOverlayWindow() {
   overlayWindow.setIgnoreMouseEvents(true, { forward: true });
 
   const overlayHtmlPath = path.join(__dirname, '../assets/ptt-overlay.html');
-  console.log('[LiveTranscribe] Loading overlay HTML from:', overlayHtmlPath);
   overlayWindow.loadFile(overlayHtmlPath).catch((err) => {
     console.error('[LiveTranscribe] Failed to load overlay window', err);
   });
 
   overlayWindow.webContents.on('did-finish-load', () => {
-    console.log('[LiveTranscribe] Overlay window did-finish-load');
     positionOverlayWindow();
     if (overlayPendingPayload) {
       overlayWindow.webContents.send('overlay:update', overlayPendingPayload);
@@ -101,20 +96,12 @@ function ensureOverlayWindow() {
     }
   });
 
-  // Forward renderer console logs to main process for debugging
-  overlayWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
-    const levelName = ['info', 'warn', 'error', 'debug', 'log'][level] || 'info';
-    console.log(`[Overlay Renderer ${levelName}]`, message);
-  });
-
   overlayWindow.on('closed', () => {
-    console.log('[LiveTranscribe] Overlay window closed');
     overlayWindow = null;
     overlayPendingPayload = null;
     clearTimeout(overlayHideTimer);
   });
 
-  console.log('[LiveTranscribe] Overlay window created successfully');
   return overlayWindow;
 }
 
@@ -148,7 +135,6 @@ function sendOverlayPayload(payload) {
 
   overlayPendingPayload = null;
   try {
-    console.log('[LiveTranscribe] Sending overlay payload:', payload);
     win.webContents.send('overlay:update', payload);
   } catch (err) {
     console.warn('[LiveTranscribe] Failed to send overlay payload', err);
@@ -162,11 +148,8 @@ function updateOverlay(state = 'recording', message, hint, options = {}) {
   const { autoHideMs, lock = false } = options || {};
   const win = ensureOverlayWindow();
   if (!win || win.isDestroyed()) {
-    console.warn('[LiveTranscribe] updateOverlay: window not available');
     return;
   }
-
-  console.log('[LiveTranscribe] updateOverlay:', { state, message, hint, options });
 
   overlayLocked = lock || overlayLocked;
   clearTimeout(overlayHideTimer);
@@ -175,7 +158,6 @@ function updateOverlay(state = 'recording', message, hint, options = {}) {
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   sendOverlayPayload({ state, message, hint });
   win.showInactive();
-  console.log('[LiveTranscribe] overlay window shown, bounds:', win.getBounds());
 
   if (autoHideMs && Number.isFinite(autoHideMs)) {
     overlayHideTimer = setTimeout(() => hideOverlay(), autoHideMs);
@@ -202,24 +184,40 @@ function hideOverlay(force = false) {
  * 启动 Overlay 计时器
  */
 function startOverlayTimer(message, hint, lock) {
-  stopOverlayTimer();
+  const alreadyRunning = Boolean(overlayTimer);
+  if (!alreadyRunning) {
+    overlayStartTime = Date.now();
+  }
+
   overlayLocked = lock || overlayLocked;
-  overlayStartTime = Date.now();
-  // Cache the message so renderer can update it while timer runs
-  overlayMessageCache = message || '';
-  console.log('[LiveTranscribe] startOverlayTimer initialized with:', { message, hint, overlayMessageCache });
+  if (typeof message === 'string') {
+    overlayMessageCache = message;
+  }
 
   const tick = () => {
     const elapsed = Date.now() - overlayStartTime;
     const formatted = formatDurationMs(elapsed);
     const durationHint = `按键录音 ${formatted}`;
-    // Send one-pass text in `message` and duration label in `hint`.
-    console.log('[LiveTranscribe] tick sending:', { overlayMessageCache, durationHint });
-    updateOverlay('recording', overlayMessageCache || '', durationHint, { lock: true });
+    // 直接发送 payload，跳过 updateOverlay 的日志和重复检查
+    const win = ensureOverlayWindow();
+    if (win && !win.isDestroyed()) {
+      try {
+        win.webContents.send('overlay:update', {
+          state: 'recording',
+          message: overlayMessageCache || '',
+          hint: durationHint
+        });
+      } catch (err) {
+        // silent
+      }
+    }
   };
 
   tick();
-  overlayTimer = setInterval(tick, 50);
+  if (!alreadyRunning) {
+    // 降低更新频率从 50ms 到 200ms，减少主线程压力
+    overlayTimer = setInterval(tick, 200);
+  }
 }
 
 /**

@@ -349,10 +349,15 @@ async function handleGlobalPttStart(payload) {
     appendLog('模型未加载，按键录音被忽略', 'error');
     return;
   }
+  // 重置粘贴缓冲区，确保每次录音都是独立的
+  state.autopasteBuffer = '';
+  state.lastFirstPassLength = 0;
+  sendOverlayRecording('正在录音...', '松开 Option/Alt 结束');
   await startLiveCapture();
 }
 
 async function handleGlobalPttStop(payload) {
+  sendOverlayState('processing', '正在识别...', '稍等片刻', { lock: false, autoHideMs: 1200 });
   await stopLiveCapture(payload?.source || 'key-up');
 }
 
@@ -457,22 +462,77 @@ function updateFirstPass(text) {
   if (el.firstPassText) {
     el.firstPassText.textContent = text || '...';
   }
+  // 手动模式下不进行 first-pass 实时粘贴，只更新 UI
   if (text && state.isRecording) {
-    handleAutoPasteFirstPass(text);
+    sendOverlayRecording(text);
   }
 }
 
-function updateSecondPass(payload) {
+async function updateSecondPass(payload) {
   const text = payload?.segments?.[0]?.text || '';
   updateSecondPassText(text || '无结果');
-  if (text) {
-    handleSecondPassReplace(text);
+
+  if (!text) {
+    sendOverlayState('done', text, '识别完成', { autoHideMs: 1500 });
+    return;
   }
+
+  // 手动模式：如果启用 LLM，先调用 LLM 处理
+  if (state.enableLlm) {
+    appendLog('[LLM] 正在调用 AI 助手处理...');
+
+    try {
+      // 获取用户当前选中的文本作为 prefix
+      const prefixResult = await window.liveApp?.getCurrentSelection?.();
+      const prefix = prefixResult?.success ? prefixResult.text : null;
+
+      if (prefix) {
+        appendLog(`[LLM] 检测到选中文本: "${prefix.slice(0, 50)}${prefix.length > 50 ? '...' : ''}"`);
+      }
+
+      // 调用 LLM 处理
+      const llmResult = await window.liveApp?.llmProcess?.(text, prefix);
+
+      if (llmResult?.success && llmResult?.text) {
+        const processedText = llmResult.text;
+        appendLog(`[LLM] AI 助手处理结果: ${processedText}`);
+        updateSecondPassText(processedText);
+        // 使用 LLM 处理后的结果进行粘贴
+        await pasteSecondPassResult(processedText);
+      } else {
+        // LLM 处理失败，使用原始结果
+        appendLog('[LLM] 处理失败，使用原始识别结果', 'warn');
+        await pasteSecondPassResult(text);
+      }
+    } catch (err) {
+      appendLog(`[LLM] 处理异常: ${err.message || err}`, 'error');
+      // 出错时使用原始结果
+      await pasteSecondPassResult(text);
+    }
+  } else {
+    // 未启用 LLM，直接粘贴 second-pass 结果
+    await pasteSecondPassResult(text);
+  }
+
+  sendOverlayState('done', text, '识别完成', { autoHideMs: 1500 });
 }
 
 function updateSecondPassText(text) {
   if (el.secondPassText) {
     el.secondPassText.textContent = text;
+  }
+}
+
+// 手动模式：直接粘贴 second-pass 结果，不需要选择替换
+async function pasteSecondPassResult(text) {
+  if (!state.autoPaste || !window.liveApp) return;
+  try {
+    const res = await window.liveApp.pasteTextToFocusedInput(text);
+    if (!res?.success) {
+      appendLog(res?.message || '粘贴失败', 'error');
+    }
+  } catch (err) {
+    appendLog(`粘贴失败: ${err.message || err}`, 'error');
   }
 }
 
@@ -498,16 +558,7 @@ async function handleAutoPasteFirstPass(text) {
 async function handleSecondPassReplace(secondText) {
   if (!state.autoPaste || !window.liveApp) return;
   const lengthToReplace = state.autopasteBuffer.length || state.lastFirstPassLength;
-  if (lengthToReplace <= 0) {
-    // 如果未粘贴过 1pass，则直接粘贴 2pass
-    try {
-      await window.liveApp.pasteTextToFocusedInput(secondText);
-      state.autopasteBuffer = secondText;
-    } catch (err) {
-      appendLog(`粘贴二次结果失败: ${err.message || err}`, 'error');
-    }
-    return;
-  }
+  if (lengthToReplace <= 0) return;
 
   try {
     const res = await window.liveApp.replaceFirstPassWithSecond({
@@ -518,8 +569,10 @@ async function handleSecondPassReplace(secondText) {
       appendLog(res?.message || '二次替换失败', 'error');
       return;
     }
-    state.autopasteBuffer = secondText;
-    state.lastFirstPassLength = secondText.length;
+    // 2pass 替换后清空缓冲区，避免影响下次录音
+    // 因为 2pass 文本可能包含额外的标点符号，导致下次录音时增量计算出错
+    state.autopasteBuffer = '';
+    state.lastFirstPassLength = 0;
   } catch (err) {
     appendLog(`二次替换失败: ${err.message || err}`, 'error');
   }
@@ -530,6 +583,7 @@ function resetSessionTexts() {
   updateSecondPassText('等待开始');
   state.autopasteBuffer = '';
   state.lastFirstPassLength = 0;
+  sendOverlayState('idle');
 }
 
 function setBadge(node, text, level = 'muted') {
@@ -585,4 +639,37 @@ function escapeHtml(text) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+function sendOverlayRecording(message, hint = '按键录音') {
+  try {
+    window.liveTranscribe?.armPttOverlay?.(true);
+    window.liveTranscribe?.updatePttOverlay?.({
+      state: 'recording',
+      message,
+      hint,
+      lock: true
+    });
+  } catch (err) {
+    // silent; overlay best-effort
+  }
+}
+
+function sendOverlayState(state, message, hint, opts = {}) {
+  try {
+    if (state === 'idle') {
+      window.liveTranscribe?.hidePttOverlay?.();
+      window.liveTranscribe?.armPttOverlay?.(false);
+      return;
+    }
+    window.liveTranscribe?.updatePttOverlay?.({
+      state,
+      message,
+      hint,
+      lock: Boolean(opts.lock),
+      autoHideMs: opts.autoHideMs
+    });
+  } catch (err) {
+    // silent
+  }
 }

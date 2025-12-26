@@ -11,10 +11,13 @@ const SelectionHook = require('selection-hook');
 let globalPttHook = null;
 let isRecordingActive = false;
 let lastTriggerDownTs = 0;
+let recordingStartTs = 0;
+let recordingWatchdog = null;
 
 // 配置
 const TRIGGER_UNI_KEY = 'Alt'; // 左侧 Option
 const TRIGGER_MIN_HOLD_MS = 180; // 忽略过短的抬起抖动（ms）
+const MAX_RECORDING_MS = 8000; // 保护性超时，防止 key-up 丢失
 
 // 外部依赖（由主应用注入）
 let mainWindow = null;
@@ -28,6 +31,33 @@ function init(options) {
   mainWindow = options.mainWindow;
   speechAsr = options.speechAsr;
   overlayManager = options.overlayManager;
+}
+
+function clearRecordingWatchdog() {
+  if (recordingWatchdog) {
+    clearTimeout(recordingWatchdog);
+    recordingWatchdog = null;
+  }
+}
+
+function startRecordingWatchdog(isToggleMode) {
+  clearRecordingWatchdog();
+  recordingWatchdog = setTimeout(() => {
+    console.warn('[Push-to-Talk] Watchdog firing, forcing stop');
+    safeStopRecording(isToggleMode ? { manualRealtime: true } : { manualRealtime: false, source: 'watchdog' });
+  }, MAX_RECORDING_MS);
+}
+
+function safeStopRecording(payload = {}) {
+  if (!isRecordingActive) return;
+  isRecordingActive = false;
+  clearRecordingWatchdog();
+  if (overlayManager) {
+    overlayManager.setOverlayArmed(false);
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('global-ptt:stop', payload);
+  }
 }
 
 /**
@@ -71,8 +101,7 @@ function setupGlobalPttHook(app) {
   }
 
   const started = globalPttHook.start({
-    enableClipboard: true,  // 启用 clipboard 回退以获取其他应用的选中文本
-    selectionPassiveMode: true
+    enableClipboard: false  // 实时转写模式不需要获取其他应用选中文本，设为 false 避免 clipboard 操作干扰按键事件
   });
 
   if (!started) {
@@ -96,10 +125,18 @@ function setupGlobalPttHook(app) {
       return;
     }
 
-    // 传统模式：down 时开始录音
-    if (isRecordingActive) return;
+    // 传统模式：down 时开始录音；如果已在录音，视为补偿性的 stop
+    if (isRecordingActive) {
+      console.warn('[Push-to-Talk] key-down while already recording, forcing stop');
+      safeStopRecording({ manualRealtime: false, source: 'double-down' });
+      return;
+    }
     lastTriggerDownTs = Date.now();
     isRecordingActive = true;
+    recordingStartTs = Date.now();
+    //用来做保护性超时，防止 key-up 丢失，内置是8秒钟
+    //有待优化为可配置
+    //startRecordingWatchdog(false);
 
     console.log('[Push-to-Talk] Calling updateOverlay with recording state');
     if (overlayManager) {
@@ -123,22 +160,13 @@ function setupGlobalPttHook(app) {
 
     if (toggleMode) {
       // Toggle 模式：完整的 down & up 算一次点击
-      // 忽略过短的按键（防抖）
-      if (elapsed < TRIGGER_MIN_HOLD_MS) {
-        return;
-      }
-
       // 切换录音状态：如果正在录音则停止，如果未录音则开始
       if (isRecordingActive) {
-        isRecordingActive = false;
-        if (overlayManager) {
-          overlayManager.setOverlayArmed(false);
-        }
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('global-ptt:stop', { manualRealtime: true });
-        }
+        safeStopRecording({ manualRealtime: true });
       } else {
         isRecordingActive = true;
+        recordingStartTs = Date.now();
+        // 不启动 Watchdog，允许无限录音
         if (overlayManager) {
           overlayManager.updateOverlay('recording', '正在录音...', '再次按键以结束', { lock: true });
         }
@@ -151,19 +179,8 @@ function setupGlobalPttHook(app) {
 
     // 传统模式：up 时停止录音
     if (!isRecordingActive) return;
-    if (elapsed < TRIGGER_MIN_HOLD_MS) {
-      // 忽略过短的抬起抖动，避免误触 stop
-      return;
-    }
 
-    isRecordingActive = false;
-    if (overlayManager) {
-      overlayManager.setOverlayArmed(false);
-    }
-
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('global-ptt:stop', { manualRealtime: false });
-    }
+    safeStopRecording({ manualRealtime: false, source: 'key-up' });
   });
 
   console.log('[Push-to-Talk] Listening for Left Option key globally');
@@ -207,6 +224,7 @@ function cleanup() {
     globalPttHook = null;
   }
   isRecordingActive = false;
+   clearRecordingWatchdog();
 }
 
 module.exports = {
