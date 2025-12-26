@@ -3,7 +3,8 @@
     "allow": [
       "Bash(chmod:*)",
       "Bash(python3:*)",
-      "Bash(timeout 3 /Users/hc/working/github/SpeechASR/electron-app/python-dist/two_pass_asr:*)"
+      "Bash(timeout 3 /Users/hc/working/github/SpeechASR/electron-app/python-dist/two_pass_asr:*)",
+      "Bash(ls:*)"
     ]
   }
 }

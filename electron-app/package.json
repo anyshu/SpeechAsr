@@ -6,8 +6,9 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "build-python": "cd ../speech-asr-sdk && python3 -m PyInstaller --onefile --name two_pass_asr two_pass_microphone_asr_electron.py --hidden-import=sherpa_onnx --hidden-import=sounddevice --hidden-import=numpy --distpath ../electron-app/python-dist",
-    "prebuild": "test -f python-dist/two_pass_asr || npm run build-python",
+    "build-python-runtime": "./scripts/build-python-runtime.sh",
+    "build-python:legacy": "cd ../speech-asr-sdk && python3 -m PyInstaller --onefile --name two_pass_asr two_pass_microphone_asr_electron.py --hidden-import=sherpa_onnx --hidden-import=sounddevice --hidden-import=numpy --distpath ../electron-app/python-dist",
+    "prebuild": "test -d python-runtime || npm run build-python-runtime",
     "build": "electron-builder",
     "build:mac": "electron-builder --mac",
     "build:win": "electron-builder --win",
@@ -59,7 +60,7 @@
     },
     "files": [
       "**/*",
-      "python-dist/**/*",
+      "python-runtime/**/*",
       "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
       "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
       "!**/node_modules/*.d.ts",
@@ -74,8 +75,8 @@
     ],
     "extraResources": [
       {
-        "from": "python-dist",
-        "to": "python-dist",
+        "from": "python-runtime",
+        "to": "python-runtime",
         "filter": [
           "**/*"
         ]

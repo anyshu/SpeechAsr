@@ -818,12 +818,22 @@ function resolveBundledPython() {
   }
 
   const base = getResourceBase();
-  
-  // 首先尝试打包的 Python 可执行文件
-  const bundledExe = app.isPackaged 
+
+  // 优先使用新的 Python 运行时（直接使用虚拟环境的 python3，不使用包装脚本）
+  const runtimePython = app.isPackaged
+    ? path.join(process.resourcesPath, 'python-runtime', 'bin', 'python3')
+    : path.join(base, 'electron-app', 'python-runtime', 'bin', 'python3');
+
+  if (fs.existsSync(runtimePython)) {
+    cachedPythonPath = runtimePython;
+    return runtimePython;
+  }
+
+  // 回退到旧的方式：PyInstaller 打包的单个可执行文件
+  const bundledExe = app.isPackaged
     ? path.join(process.resourcesPath, 'python-dist', 'two_pass_asr')
     : path.join(base, 'electron-app', 'python-dist', 'two_pass_asr');
-  
+
   if (fs.existsSync(bundledExe)) {
     cachedPythonPath = bundledExe;
     return bundledExe;
@@ -833,6 +843,7 @@ function resolveBundledPython() {
   const binNames = process.platform === 'win32' ? ['python.exe', 'python3.exe'] : ['python3', 'python'];
   const candidates = [
     process.env.SPEECH_ASR_PYTHON,
+    path.join(base, 'python-runtime', 'bin', 'python3'),
     path.join(base, 'python', process.platform === 'win32' ? 'python.exe' : path.join('bin', 'python3')),
     path.join(base, 'python', process.platform === 'win32' ? 'python.exe' : path.join('bin', 'python'))
   ].filter(Boolean);
@@ -860,6 +871,14 @@ function resolveBundledPython() {
   }
 
   return null;
+}
+
+// 获取 Python ASR 脚本路径
+function getPythonScriptPath() {
+  const base = getResourceBase();
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'python-runtime', 'scripts', 'two_pass_microphone_asr_electron.py')
+    : path.join(base, 'electron-app', 'python-runtime', 'scripts', 'two_pass_microphone_asr_electron.py');
 }
 
 const speechAsr = new SpeechASR({
@@ -1747,7 +1766,8 @@ function buildLiveSessionRuntime(mode, payload = {}) {
       streaming,
       secondPass: senseVoice,
       vadModel: vadModelPath,
-      workingDir: getResourceBase()
+      workingDir: getResourceBase(),
+      scriptPath: getPythonScriptPath()
     }
   };
 
@@ -2144,7 +2164,8 @@ ipcMain.handle('push-to-talk-asr', async (_event, arrayBuffer, mimeType = 'audio
         streaming,
         secondPass: senseVoice,
         vadModel: vadModelPath,
-        workingDir: getResourceBase()
+        workingDir: getResourceBase(),
+        scriptPath: getPythonScriptPath()
       },
       pythonPath
     });
@@ -2186,7 +2207,8 @@ ipcMain.handle('ptt-start', async (_event, options = {}) => {
         streaming,
         secondPass: senseVoice,
         vadModel: vadModelPath,
-        workingDir: getResourceBase()
+        workingDir: getResourceBase(),
+        scriptPath: getPythonScriptPath()
       },
       pythonPath
     });
@@ -2280,7 +2302,8 @@ ipcMain.handle('start-live-transcribe', async (_event, options = {}) => {
         streaming,
         secondPass: senseVoice,
         vadModel: vadModelPath,
-        workingDir: getResourceBase()
+        workingDir: getResourceBase(),
+        scriptPath: getPythonScriptPath()
       }
     });
 
