@@ -6,10 +6,13 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
+    "start:live": "APP_MODE=live electron . --live",
+    "dev:live": "APP_MODE=live electron . --dev --live",
     "build-python-runtime": "./scripts/build-python-runtime.sh",
     "build-python:legacy": "cd ../speech-asr-sdk && python3 -m PyInstaller --onefile --name two_pass_asr two_pass_microphone_asr_electron.py --hidden-import=sherpa_onnx --hidden-import=sounddevice --hidden-import=numpy --distpath ../electron-app/python-dist",
     "prebuild": "test -d python-runtime || npm run build-python-runtime",
     "build": "electron-builder",
+    "build:live": "APP_MODE=live electron-builder",
     "build:mac": "electron-builder --mac",
     "build:win": "electron-builder --win",
     "build:linux": "electron-builder --linux"

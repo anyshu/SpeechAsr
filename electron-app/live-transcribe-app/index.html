@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>西瓜说 · 实时转写</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <div>
+        <div class="title">实时转写</div>
+        <div class="subtitle">按住 Option / Alt 开始录音，松开结束</div>
+      </div>
+      <div class="pill" id="appModePill">手动模式</div>
+    </header>
+
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <div class="card-title">权限检测</div>
+          <div class="card-desc">麦克风与辅助权限需提前授权</div>
+        </div>
+        <div class="badge muted" id="micStatusBadge">未知</div>
+      </div>
+      <div class="row space">
+        <button id="checkMicBtn">重新检测</button>
+        <button class="primary" id="requestMicBtn">请求权限</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <div class="card-title">模型下载</div>
+          <div class="card-desc">SenseVoice + ZipFormer + 标点 + VAD</div>
+        </div>
+        <div class="badge muted" id="modelSummary">未检测</div>
+      </div>
+      <div class="model-list">
+        <div class="model-row" data-model="sense">
+          <div class="model-name">SenseVoice 2pass</div>
+          <div class="model-actions">
+            <span class="dot" id="senseStatusDot"></span>
+            <span class="status-text" id="senseStatusText">未检测</span>
+            <button class="ghost" data-download="sense">下载</button>
+          </div>
+        </div>
+        <div class="model-row" data-model="streaming">
+          <div class="model-name">ZipFormer Streaming</div>
+          <div class="model-actions">
+            <span class="dot" id="streamStatusDot"></span>
+            <span class="status-text" id="streamStatusText">未检测</span>
+            <button class="ghost" data-download="stream">下载</button>
+          </div>
+        </div>
+        <div class="model-row" data-model="punctuation">
+          <div class="model-name">标点模型</div>
+          <div class="model-actions">
+            <span class="dot" id="punctStatusDot"></span>
+            <span class="status-text" id="punctStatusText">未检测</span>
+            <button class="ghost" data-download="punct">下载</button>
+          </div>
+        </div>
+        <div class="model-row" data-model="vad">
+          <div class="model-name">VAD (Silero)</div>
+          <div class="model-actions">
+            <span class="dot" id="vadStatusDot"></span>
+            <span class="status-text" id="vadStatusText">未检测</span>
+            <button class="ghost" data-download="vad">下载</button>
+          </div>
+        </div>
+      </div>
+      <div class="row space">
+        <button class="primary" id="downloadAllBtn">一键下载必需模型</button>
+        <div class="progress-text" id="modelProgressText"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <div class="card-title">实时转写（手动）</div>
+          <div class="card-desc">仅保留手动模式，默认自动粘贴开启</div>
+        </div>
+        <div class="badge muted" id="liveStatusBadge">未加载</div>
+      </div>
+
+      <div class="row space">
+        <label class="inline">
+          麦克风
+          <select id="micSelect"></select>
+        </label>
+        <button id="refreshMicBtn" class="ghost">刷新</button>
+      </div>
+
+      <div class="toggle-row">
+        <label><input type="checkbox" id="autoPasteToggle" checked> 自动粘贴</label>
+        <label><input type="checkbox" id="manualRealtimeToggle"> 实时分段</label>
+        <label title="LLM 处理默认关闭"><input type="checkbox" id="llmToggle"> LLM 处理</label>
+      </div>
+
+      <div class="row space">
+        <button class="primary" id="loadModelsBtn">加载模型</button>
+        <button id="releaseModelsBtn">释放</button>
+      </div>
+      <div class="hint">按住 Option / Alt 录音，松开结束，小窗会自动显示录音状态</div>
+    </section>
+
+    <section class="card results">
+      <div class="card-title">识别结果</div>
+      <div class="pass pass-first">
+        <div class="pass-label">第一遍 · ZipFormer</div>
+        <div class="pass-text" id="firstPassText">等待开始</div>
+      </div>
+      <div class="pass pass-second">
+        <div class="pass-label">第二遍 · SenseVoice</div>
+        <div class="pass-text" id="secondPassText">等待开始</div>
+      </div>
+    </section>
+
+    <section class="card logs">
+      <div class="card-head">
+        <div class="card-title">日志</div>
+        <button class="ghost" id="clearLogBtn">清空</button>
+      </div>
+      <div class="log-list" id="logList"></div>
+    </section>
+  </div>
+
+  <script src="./renderer.js"></script>
+</body>
+</html>

@@ -18,6 +18,69 @@ const https = require('https');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const { SpeechASR, DEFAULT_OPTIONS } = require('@sherpa-onnx/speech-asr');
 
+// ============== App 模式检测 ==============
+// 支持两种模式：full (完整版) 和 lite (简化版)
+// 通过环境变量 APP_MODE 或命令行参数 --lite/--live 指定
+const argvMode = process.argv.includes('--live')
+  ? 'live'
+  : process.argv.includes('--lite')
+    ? 'lite'
+    : null;
+const APP_MODE = process.env.APP_MODE || argvMode || 'full';
+
+// 模式相关配置
+const MODE_CONFIG = {
+  lite: {
+    appName: '西瓜说 Lite',
+    htmlFile: 'lite-app/index-lite.html',
+    preloadFile: 'lite-app/preload-lite.js',
+    windowConfig: {
+      width: 500,
+      height: 400,
+      minWidth: 400,
+      minHeight: 300
+    },
+    defaults: {
+      autoPaste: true,
+      enableLlm: false,
+      manualRealtime: false
+    }
+  },
+  live: {
+    appName: '西瓜说 · 实时转写',
+    htmlFile: 'live-transcribe-app/index.html',
+    preloadFile: 'live-transcribe-app/preload.js',
+    windowConfig: {
+      width: 520,
+      height: 640,
+      minWidth: 440,
+      minHeight: 520,
+      resizable: true
+    },
+    defaults: {
+      autoPaste: true,
+      enableLlm: false,
+      manualRealtime: false
+    }
+  },
+  full: {
+    appName: '西瓜说',
+    htmlFile: 'index.html',
+    preloadFile: 'preload.js',
+    windowConfig: {
+      width: 1200,
+      height: 800
+    },
+    defaults: {
+      autoPaste: false,
+      enableLlm: true,
+      manualRealtime: false
+    }
+  }
+};
+
+const currentConfig = MODE_CONFIG[APP_MODE] || MODE_CONFIG.full;
+
 // 实时转写模块
 const LiveTranscribeModule = require('./live-transcribe');
 
@@ -32,7 +95,7 @@ const STREAMING_MODEL_DIR_NAME = 'online-recognition-model';
 const VAD_MODEL_URL = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad_v5.onnx';
 const VAD_MODEL_FILENAME = 'silero_vad.onnx';
 const ICON_PATH = path.join(__dirname, 'ok.png');
-const APP_NAME = '西瓜说';
+const APP_NAME = currentConfig.appName;
 
 // LLM 配置
 const LLM_CONFIG = {
@@ -923,18 +986,30 @@ function extractPunctuationModel(archivePath) {
 }
 
 function createWindow() {
+  const wc = currentConfig.windowConfig;
+  const preloadPath = path.join(__dirname, currentConfig.preloadFile);
+  try {
+    const exists = fs.existsSync(preloadPath);
+    console.log(`[MainWindow] APP_MODE=${APP_MODE} preload: ${preloadPath} exists=${exists}`);
+  } catch {
+    // ignore
+  }
+
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: wc.width || 1200,
+    height: wc.height || 800,
+    minWidth: wc.minWidth,
+    minHeight: wc.minHeight,
     icon: getIconPath(),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      preload: path.join(__dirname, 'preload.js')
+      preload: preloadPath
     },
     frame: false, // 无边框窗口
     titleBarStyle: 'customButtonsOnHover',
-    title: APP_NAME
+    title: APP_NAME,
+    resizable: typeof wc.resizable === 'boolean' ? wc.resizable : APP_MODE === 'full'
   });
 
   mainWindow.on('close', (e) => {
@@ -953,7 +1028,13 @@ function createWindow() {
     });
   });
 
-  mainWindow.loadFile('index.html');
+  mainWindow.loadFile(currentConfig.htmlFile);
+
+  // Forward renderer console logs to main process for debugging
+  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    const levelName = ['info', 'warn', 'error', 'debug', 'log'][level] || 'info';
+    console.log(`[Renderer ${levelName}]`, message);
+  });
 
   // 开发环境下打开开发者工具
   if (process.argv.includes('--dev')) {
@@ -1394,6 +1475,125 @@ ipcMain.handle('get-current-selection', async () => {
     console.error('[Selection] Error:', error);
     return { success: false, message: error.message };
   }
+});
+
+ipcMain.on('ptt-overlay:update', (_event, payload) => {
+  if (!payload) return;
+  const { state, message, hint, autoHideMs, lock } = payload;
+  console.log('[ptt-overlay:update] Received:', { state, message, hint, overlayTimer: !!overlayTimer, overlayMessageCache });
+  if (state === 'idle') {
+    hideOverlay(true);
+    return;
+  }
+  if (state === 'recording') {
+    // If timer already running, update cached message only to avoid
+    // restarting timer; otherwise start it.
+    if (overlayTimer) {
+      overlayMessageCache = message || overlayMessageCache || '';
+      console.log('[ptt-overlay:update] Updated cache:', overlayMessageCache);
+      // immediately send an update so overlay displays new message
+      const formatted = formatDurationMs(Date.now() - overlayStartTime);
+      const durationHint = `按键录音 ${formatted}`;
+      sendOverlayPayload({ state: 'recording', message: overlayMessageCache || '', hint: durationHint, lock: Boolean(lock) });
+      return;
+    }
+    startOverlayTimer(message, hint, Boolean(lock));
+    return;
+  }
+  stopOverlayTimer();
+  updateOverlay(state || 'recording', message, hint, {
+    autoHideMs,
+    lock: Boolean(lock)
+  });
+});
+
+ipcMain.on('ptt-overlay:hide', () => hideOverlay());
+
+ipcMain.on('ptt-overlay:arm', (_event, enabled) => {
+  overlayArmed = Boolean(enabled);
+  if (!overlayArmed) {
+    overlayLocked = false;
+    hideOverlay(true);
+  }
+});
+
+function buildLiveSessionRuntime(mode, payload = {}) {
+  console.log('===== [main] buildLiveSessionRuntime START =====');
+  console.log('[main] mode:', mode);
+  console.log('[main] payload?.manualRealtime:', payload?.manualRealtime);
+  console.log('[main] Boolean(payload?.manualRealtime):', Boolean(payload?.manualRealtime));
+
+  if (!modelExists()) {
+    return { success: false, message: 'SenseVoice 模型未就绪，请先下载' };
+  }
+  if (!streamingModelExists()) {
+    return { success: false, message: '流式 ZipFormer 模型未就绪，请先下载' };
+  }
+
+  const pythonPath = resolveBundledPython();
+  if (!pythonPath) {
+    return { success: false, message: PYTHON_NOT_FOUND_MESSAGE };
+  }
+
+  const { modelDir } = getModelPaths();
+  const senseVoice = resolveSenseVoiceFiles(modelDir);
+  if (!senseVoice) {
+    return { success: false, message: '未找到 SenseVoice 模型或 tokens.txt' };
+  }
+
+  const { modelDir: streamingDir } = getStreamingModelPaths();
+  const streaming = resolveStreamingZipformerComponents(streamingDir);
+  if (!streaming) {
+    return { success: false, message: '未找到 ZipFormer 流式模型完整文件（encoder/decoder/joiner/tokens）' };
+  }
+
+  const punctuationReady = punctuationModelExists();
+  const { modelPath: defaultVadModel } = getVadPaths();
+  const vadModelPath = fs.existsSync(defaultVadModel) ? defaultVadModel : '';
+  const vadOpt = payload?.vad || {};
+  const vadDefaults = DEFAULT_OPTIONS.vad.silero;
+  const sileroCfg = {
+    threshold: typeof vadOpt.threshold === 'number' ? vadOpt.threshold : vadDefaults.threshold,
+    minSilenceDuration:
+      typeof vadOpt.minSilence === 'number' ? vadOpt.minSilence : vadDefaults.minSilenceDuration,
+    minSpeechDuration:
+      typeof vadOpt.minSpeech === 'number' ? vadOpt.minSpeech : vadDefaults.minSpeechDuration,
+    maxSpeechDuration:
+      typeof vadOpt.maxSpeech === 'number' ? vadOpt.maxSpeech : vadDefaults.maxSpeechDuration
+  };
+
+  const runtime = {
+    device: payload?.micName,
+    numThreads: payload?.numThreads || 2,
+    numThreadsSecond: payload?.numThreadsSecond || payload?.numThreads || 4,
+    sampleRate: payload?.sampleRate || speechAsr.activeOptions?.sampleRate || 16000,
+    bufferSize: payload?.bufferSize || speechAsr.activeOptions?.bufferSize || 1600,
+    pythonPath,
+    manualRealtime: Boolean(payload?.manualRealtime),  // 实时 VAD+2pass 模式开关
+    vadMode: vadModelPath ? 'silero' : 'off',
+    vad: { silero: sileroCfg },
+    modelPaths: {
+      streaming,
+      secondPass: senseVoice,
+      vadModel: vadModelPath,
+      workingDir: getResourceBase(),
+      scriptPath: getPythonScriptPath()
+    }
+  };
+
+  console.log('[main] runtime.manualRealtime (final):', runtime.manualRealtime);
+  console.log('[main] buildLiveSessionRuntime END =====');
+  return { success: true, runtime, punctuationReady, vadReady: Boolean(vadModelPath) };
+}
+
+// 获取当前模式的默认配置
+ipcMain.handle('get-mode-defaults', async () => {
+  return currentConfig.defaults;
+});
+
+// 获取当前应用模式
+ipcMain.handle('get-app-mode', async () => {
+  return { mode: APP_MODE, appName: currentConfig.appName };
 });
 
 // 模型相关
