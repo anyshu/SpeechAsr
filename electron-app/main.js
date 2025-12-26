@@ -582,21 +582,67 @@ function setupGlobalPttHook() {
   let isRecordingActive = false;
   let lastTriggerDownTs = 0;
 
+  // 检查是否使用 toggle 模式（手动模式 + 实时自动分段）
+  const isToggleMode = () => {
+    return speechAsr.isManual() && speechAsr.activeOptions?.manualRealtime === true;
+  };
+
   hookInstance.on('key-down', (event) => {
-    if (!isTriggerKey(event) || isRecordingActive) return;
+    if (!isTriggerKey(event)) return;
+
+    const toggleMode = isToggleMode();
+    if (toggleMode) {
+      // Toggle 模式：在 key-up 时处理（完整的 down & up 算一次点击）
+      // 这里只记录时间，不执行任何操作
+      lastTriggerDownTs = Date.now();
+      return;
+    }
+
+    // 传统模式：down 时开始录音
+    if (isRecordingActive) return;
     lastTriggerDownTs = Date.now();
     isRecordingActive = true;
     if (overlayArmed) {
-      updateOverlay('recording', '正在录音...', '123松开设定按键以结束', { lock: true });
+      updateOverlay('recording', '正在录音...', '松开设定按键以结束', { lock: true });
     }
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('global-ptt:start');
+      mainWindow.webContents.send('global-ptt:start', { manualRealtime: false });
     }
   });
 
   hookInstance.on('key-up', (event) => {
-    if (!isTriggerKey(event) || !isRecordingActive) return;
+    if (!isTriggerKey(event)) return;
+
+    const toggleMode = isToggleMode();
     const elapsed = Date.now() - lastTriggerDownTs;
+
+    if (toggleMode) {
+      // Toggle 模式：完整的 down & up 算一次点击
+      // 忽略过短的按键（防抖）
+      if (elapsed < TRIGGER_MIN_HOLD_MS) {
+        return;
+      }
+      // 切换录音状态：如果正在录音则停止，如果未录音则开始
+      if (isRecordingActive) {
+        isRecordingActive = false;
+        overlayLocked = false;
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('global-ptt:stop', { manualRealtime: true });
+        }
+      } else {
+        isRecordingActive = true;
+        if (overlayArmed) {
+          updateOverlay('recording', '正在录音...', '再次按键以结束', { lock: true });
+        }
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('global-ptt:start', { manualRealtime: true });
+        }
+      }
+      return;
+    }
+
+    // 传统模式：up 时停止录音
+    if (!isRecordingActive) return;
     if (elapsed < TRIGGER_MIN_HOLD_MS) {
       // 忽略过短的抬起抖动，避免误触 stop
       return;
@@ -604,7 +650,7 @@ function setupGlobalPttHook() {
     isRecordingActive = false;
     overlayLocked = false;
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('global-ptt:stop');
+      mainWindow.webContents.send('global-ptt:stop', { manualRealtime: false });
     }
   });
 
@@ -618,7 +664,7 @@ function setupGlobalPttHook() {
   });
 
   globalPttHook = hookInstance;
-  console.log('[Push-to-Talk] Listening for Left Option key globally (hold to record, release to stop)');
+  console.log('[Push-to-Talk] Listening for Left Option key globally');
 }
 
 function resolveStreamingZipformerComponents(modelDir) {

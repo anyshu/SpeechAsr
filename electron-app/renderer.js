@@ -400,26 +400,40 @@ function initializeEventListeners() {
     const cleanupListeners = [];
     if (window.electronAPI?.onGlobalPttStart) {
         cleanupListeners.push(
-            window.electronAPI.onGlobalPttStart(() => {
+            window.electronAPI.onGlobalPttStart((payload) => {
                 if (
                     liveMode !== 'manual' ||
                     !liveModelsLoaded ||
-                    isPttRecording ||
                     isRecording ||
-                    isLive ||
-                    pttStartPromise
+                    isLive
                 )
                     return;
-                setPttBannerState('recording', '正在录音...', 'pop松开设定按键以结束');
+                // Toggle 模式：检查是否正在录音，如果是则忽略（由 stop 事件处理）
+                const isToggleMode = payload?.manualRealtime === true;
+                if (isToggleMode && isPttRecording) {
+                    return; // 等待 stop 事件
+                }
+                // 传统模式：检查是否已经在录音
+                if (!isToggleMode && (isPttRecording || pttStartPromise)) {
+                    return;
+                }
+                setPttBannerState('recording', '正在录音...', isToggleMode ? '再次按键以结束' : '松开设定按键以结束');
                 startPttRecording();
             })
         );
     }
     if (window.electronAPI?.onGlobalPttStop) {
         cleanupListeners.push(
-            window.electronAPI.onGlobalPttStop(() => {
+            window.electronAPI.onGlobalPttStop((payload) => {
                 if (liveMode !== 'manual') return;
-                stopPttRecording({ source: 'key-up' });
+                const isToggleMode = payload?.manualRealtime === true;
+                // Toggle 模式：停止录音
+                if (isToggleMode) {
+                    stopPttRecording({ source: 'key-up' });
+                } else {
+                    // 传统模式：停止录音
+                    stopPttRecording({ source: 'key-up' });
+                }
             })
         );
     }
@@ -1457,6 +1471,11 @@ function setPttUI(state) {
         liveStatus.textContent = '按住设定按键录音中（两段式）';
         liveTranscript.style.display = 'block';
         liveBtn?.classList.add('recording');
+        // 更新按钮文本
+        if (liveBtn) {
+            const btnText = liveBtn.querySelector('.live-btn-text');
+            if (btnText) btnText.textContent = '停止按键录音';
+        }
         setPttBannerState('recording');
     } else if (state === 'processing') {
         livePill.textContent = '按键识别中';
@@ -1465,6 +1484,11 @@ function setPttUI(state) {
         liveStatus.textContent = '按键录音结束，正在识别...';
         liveTranscript.style.display = 'block';
         liveBtn?.classList.remove('recording');
+        // 更新按钮文本
+        if (liveBtn) {
+            const btnText = liveBtn.querySelector('.live-btn-text');
+            if (btnText) btnText.textContent = '开始按键录音（两段式）';
+        }
         setPttBannerState('processing');
     } else if (state === 'done') {
         livePill.textContent = '按键完成';
@@ -1472,6 +1496,11 @@ function setPttUI(state) {
         livePill.style.color = '#166534';
         liveStatus.textContent = '按键识别完成';
         liveBtn?.classList.remove('recording');
+        // 更新按钮文本
+        if (liveBtn) {
+            const btnText = liveBtn.querySelector('.live-btn-text');
+            if (btnText) btnText.textContent = '开始按键录音（两段式）';
+        }
         lastAutoPasteKey = '';
         setPttBannerState('done');
         setTimeout(() => setPttBannerState('idle'), 1600);
@@ -1481,6 +1510,11 @@ function setPttUI(state) {
         livePill.style.color = '#334155';
         liveStatus.textContent = '未开始';
         liveBtn?.classList.remove('recording');
+        // 更新按钮文本
+        if (liveBtn) {
+            const btnText = liveBtn.querySelector('.live-btn-text');
+            if (btnText) btnText.textContent = '开始按键录音（两段式）';
+        }
         setPttBannerState('idle');
     }
 }
@@ -1581,7 +1615,13 @@ function handleLiveResult(payload) {
         appendLiveLog(payload.message || '实时转写结束');
         updateStatus('实时转写结束');
         if (liveMode === 'manual') {
-            setPttUI('done');
+            // Toggle 模式：如果录音仍在进行，保持 recording 状态
+            // 传统模式：设置为 done 状态
+            if (isPttRecording) {
+                setPttUI('recording');
+            } else {
+                setPttUI('done');
+            }
         }
         return;
     }
@@ -1680,7 +1720,15 @@ function handleLiveResult(payload) {
           }
         }
         if (liveMode === 'manual' && !isLive) {
-            setPttUI('done');
+            // Toggle 模式：如果录音仍在进行，保持 recording 状态
+            // 传统模式：设置为 done 状态
+            if (isPttRecording) {
+                // Toggle 模式（实时自动分段）：录音仍在继续，保持 recording 状态
+                setPttUI('recording');
+            } else {
+                // 传统模式：录音已结束，设置为 done 状态
+                setPttUI('done');
+            }
         }
     }
 }
@@ -2028,7 +2076,13 @@ function handlePttResult(resultPayload) {
         if (lastLine) {
             setTimeout(() => lastLine.scrollIntoView({ behavior: 'smooth', block: 'end' }), 10);
         }
-        setPttUI('done');
+        // Toggle 模式：如果录音仍在进行，保持 recording 状态
+        // 传统模式：设置为 done 状态
+        if (isPttRecording) {
+            setPttUI('recording');
+        } else {
+            setPttUI('done');
+        }
         updateStatus('按键识别完成');
         void autoPasteLiveIfEnabled('ptt-result');
     }

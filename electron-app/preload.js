@@ -69,12 +69,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   switchLiveDevice: (payload) => ipcRenderer.invoke('live-switch-device', payload),
   onLiveResult: (callback) => ipcRenderer.on('live-transcribe-result', callback),
   onGlobalPttStart: (callback) => {
-    const listener = () => callback();
+    const listener = (_event, payload) => callback(payload);
     ipcRenderer.on('global-ptt:start', listener);
     return () => ipcRenderer.removeListener('global-ptt:start', listener);
   },
   onGlobalPttStop: (callback) => {
-    const listener = () => callback();
+    const listener = (_event, payload) => callback(payload);
     ipcRenderer.on('global-ptt:stop', listener);
     return () => ipcRenderer.removeListener('global-ptt:stop', listener);
   },
