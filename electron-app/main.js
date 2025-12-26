@@ -5,7 +5,6 @@ const {
   dialog,
   shell,
   clipboard,
-  screen,
   Tray,
   nativeImage,
   Menu,
@@ -18,7 +17,9 @@ const fs = require('fs');
 const https = require('https');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const { SpeechASR, DEFAULT_OPTIONS } = require('@sherpa-onnx/speech-asr');
-const SelectionHook = require('selection-hook');
+
+// 实时转写模块
+const LiveTranscribeModule = require('./live-transcribe');
 
 const OFFLINE_MODEL_URL = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2';
 // const OFFLINE_MODEL_URL = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-funasr-nano-2025-12-17.tar.bz2';
@@ -56,164 +57,14 @@ function getIconImage() {
 
 let mainWindow;
 let cachedPythonPath = null;
-let overlayWindow = null;
-let overlayHideTimer = null;
-let overlayPendingPayload = null;
-let overlayArmed = false;
-let overlayTimer = null;
-let overlayStartTime = 0;
-let overlayLocked = false;
-let overlayMessageCache = '';
 let tray = null;
 let forceQuit = false;
-let liveSessionMode = null; // null | 'shared'
-let liveModelsLoaded = false;
 const PYTHON_NOT_FOUND_MESSAGE =
   '未找到可用的 Python3，请安装 Python3 或将 SPEECH_ASR_PYTHON 指向可执行文件';
 
 function getResourceBase() {
   // 开发环境使用项目根目录，打包后使用资源目录
   return app.isPackaged ? process.resourcesPath : path.join(__dirname, '..');
-}
-
-function ensureOverlayWindow() {
-  if (overlayWindow && !overlayWindow.isDestroyed()) return overlayWindow;
-
-  overlayWindow = new BrowserWindow({
-    width: 360,
-    height: 64,
-    frame: false,
-    transparent: true,
-    resizable: false,
-    movable: false,
-    skipTaskbar: true,
-    focusable: false,
-    show: false,
-    alwaysOnTop: true,
-    hasShadow: false,
-    fullscreenable: false,
-    webPreferences: {
-      preload: path.join(__dirname, 'overlay-preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      backgroundThrottling: false
-    }
-  });
-
-  overlayWindow.setAlwaysOnTop(true, 'screen-saver');
-  overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  overlayWindow.setIgnoreMouseEvents(true, { forward: true });
-  overlayWindow.loadFile(path.join(__dirname, 'ptt-overlay.html')).catch((err) => {
-    console.error('Failed to load overlay window', err);
-  });
-
-  overlayWindow.webContents.on('did-finish-load', () => {
-    positionOverlayWindow();
-    if (overlayPendingPayload) {
-      overlayWindow.webContents.send('overlay:update', overlayPendingPayload);
-      overlayPendingPayload = null;
-    }
-    // DEBUG: 打开小窗的开发者工具
-    overlayWindow.webContents.openDevTools({ mode: 'detach' });
-  });
-
-  overlayWindow.on('closed', () => {
-    overlayWindow = null;
-    overlayPendingPayload = null;
-    clearTimeout(overlayHideTimer);
-  });
-
-  return overlayWindow;
-}
-
-function positionOverlayWindow() {
-  if (!app.isReady()) return;
-  if (!overlayWindow || overlayWindow.isDestroyed()) return;
-  const bounds = overlayWindow.getBounds();
-  const display = screen.getPrimaryDisplay();
-  const workArea = display?.workArea || display?.bounds;
-  const x = Math.round(workArea.x + (workArea.width - bounds.width) / 2);
-  const y = Math.round(workArea.y + workArea.height - bounds.height - 20);
-  overlayWindow.setPosition(x, y);
-}
-
-function sendOverlayPayload(payload) {
-  const win = ensureOverlayWindow();
-  if (!win || win.isDestroyed()) return;
-  if (win.webContents.isLoading()) {
-    overlayPendingPayload = payload;
-    return;
-  }
-  overlayPendingPayload = null;
-  try {
-    console.log('[sendOverlayPayload] Sending:', payload);
-    win.webContents.send('overlay:update', payload);
-  } catch (err) {
-    console.warn('Failed to send overlay payload', err);
-  }
-}
-
-function updateOverlay(state = 'recording', message, hint, options = {}) {
-  const { autoHideMs, lock = false } = options || {};
-  const win = ensureOverlayWindow();
-  if (!win || win.isDestroyed()) return;
-  overlayLocked = lock || overlayLocked;
-  clearTimeout(overlayHideTimer);
-  positionOverlayWindow();
-  win.setAlwaysOnTop(true, 'screen-saver');
-  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  sendOverlayPayload({ state, message, hint });
-  win.showInactive();
-  if (autoHideMs && Number.isFinite(autoHideMs)) {
-    overlayHideTimer = setTimeout(() => hideOverlay(), autoHideMs);
-  }
-}
-
-function hideOverlay(force = false) {
-  if (overlayLocked && !force) return;
-  clearTimeout(overlayHideTimer);
-  overlayHideTimer = null;
-  stopOverlayTimer();
-  if (overlayWindow && !overlayWindow.isDestroyed()) {
-    sendOverlayPayload({ state: 'idle' });
-    overlayWindow.hide();
-  }
-}
-
-function startOverlayTimer(message, hint, lock) {
-  stopOverlayTimer();
-  overlayLocked = lock || overlayLocked;
-  overlayStartTime = Date.now();
-  // Cache the message so renderer can update it while timer runs
-  overlayMessageCache = message || '';
-  console.log('[startOverlayTimer] Initialized with:', { message, hint, overlayMessageCache });
-
-  const tick = () => {
-    const elapsed = Date.now() - overlayStartTime;
-    const formatted = formatDurationMs(elapsed);
-    const durationHint = `按键录音 ${formatted}`;
-    // Send one-pass text in `message` and duration label in `hint`.
-    console.log('[tick] Sending:', { overlayMessageCache, durationHint });
-    updateOverlay('recording', overlayMessageCache || '', durationHint, { lock: true });
-  };
-
-  tick();
-  overlayTimer = setInterval(tick, 50);
-}
-
-function stopOverlayTimer() {
-  if (overlayTimer) {
-    clearInterval(overlayTimer);
-    overlayTimer = null;
-  }
-}
-
-function formatDurationMs(ms) {
-  const clamped = Math.max(0, Math.floor(ms));
-  const minutes = Math.floor(clamped / 60000);
-  const seconds = Math.floor((clamped % 60000) / 1000);
-  const millis = clamped % 1000;
-  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(millis).padStart(3, '0')}`;
 }
 
 function ensureTray() {
@@ -555,126 +406,6 @@ async function pasteTextToFocusedInputOnce(text) {
   }
 }
 
-const TRIGGER_UNI_KEY = 'Alt'; // 左侧 Option
-let globalPttHook = null;
-const TRIGGER_MIN_HOLD_MS = 180; // 忽略过短的抬起抖动（ms）
-
-function setupGlobalPttHook() {
-  let hookInstance = null;
-  try {
-    hookInstance = new SelectionHook();
-  } catch (err) {
-    console.warn('[Push-to-Talk] Failed to init selection-hook:', err?.message || err);
-    return;
-  }
-
-  const started = hookInstance.start({
-    enableClipboard: true,  // 启用 clipboard 回退以获取其他应用的选中文本
-    selectionPassiveMode: true
-  });
-
-  if (!started) {
-    console.warn('[Push-to-Talk] selection-hook failed to start');
-    return;
-  }
-
-  const isTriggerKey = (event) => {
-    if (!event || event.uniKey !== TRIGGER_UNI_KEY) return false;
-    if (process.platform === 'darwin' && typeof event.vkCode === 'number') {
-      // macOS 左侧 Option 键 vkCode = 58
-      return event.vkCode === 58;
-    }
-    return true;
-  };
-
-  let isRecordingActive = false;
-  let lastTriggerDownTs = 0;
-
-  // 检查是否使用 toggle 模式（手动模式 + 实时自动分段）
-  const isToggleMode = () => {
-    return speechAsr.isManual() && speechAsr.activeOptions?.manualRealtime === true;
-  };
-
-  hookInstance.on('key-down', (event) => {
-    if (!isTriggerKey(event)) return;
-
-    const toggleMode = isToggleMode();
-    if (toggleMode) {
-      // Toggle 模式：在 key-up 时处理（完整的 down & up 算一次点击）
-      // 这里只记录时间，不执行任何操作
-      lastTriggerDownTs = Date.now();
-      return;
-    }
-
-    // 传统模式：down 时开始录音
-    if (isRecordingActive) return;
-    lastTriggerDownTs = Date.now();
-    isRecordingActive = true;
-    if (overlayArmed) {
-      updateOverlay('recording', '正在录音...', '松开设定按键以结束', { lock: true });
-    }
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('global-ptt:start', { manualRealtime: false });
-    }
-  });
-
-  hookInstance.on('key-up', (event) => {
-    if (!isTriggerKey(event)) return;
-
-    const toggleMode = isToggleMode();
-    const elapsed = Date.now() - lastTriggerDownTs;
-
-    if (toggleMode) {
-      // Toggle 模式：完整的 down & up 算一次点击
-      // 忽略过短的按键（防抖）
-      if (elapsed < TRIGGER_MIN_HOLD_MS) {
-        return;
-      }
-      // 切换录音状态：如果正在录音则停止，如果未录音则开始
-      if (isRecordingActive) {
-        isRecordingActive = false;
-        overlayLocked = false;
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('global-ptt:stop', { manualRealtime: true });
-        }
-      } else {
-        isRecordingActive = true;
-        if (overlayArmed) {
-          updateOverlay('recording', '正在录音...', '再次按键以结束', { lock: true });
-        }
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('global-ptt:start', { manualRealtime: true });
-        }
-      }
-      return;
-    }
-
-    // 传统模式：up 时停止录音
-    if (!isRecordingActive) return;
-    if (elapsed < TRIGGER_MIN_HOLD_MS) {
-      // 忽略过短的抬起抖动，避免误触 stop
-      return;
-    }
-    isRecordingActive = false;
-    overlayLocked = false;
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('global-ptt:stop', { manualRealtime: false });
-    }
-  });
-
-  app.on('before-quit', () => {
-    try {
-      hookInstance.stop();
-      hookInstance.cleanup();
-    } catch (err) {
-      console.warn('[Push-to-Talk] Failed to cleanup selection-hook', err);
-    }
-  });
-
-  globalPttHook = hookInstance;
-  console.log('[Push-to-Talk] Listening for Left Option key globally');
-}
-
 function resolveStreamingZipformerComponents(modelDir) {
   if (!modelDir || !fs.existsSync(modelDir)) return null;
   const candidates = (baseNames) => {
@@ -736,11 +467,6 @@ function streamingModelExists() {
 function vadModelExists() {
   const { modelPath } = getVadPaths();
   return fs.existsSync(modelPath);
-}
-
-function resetLiveSessionState() {
-  liveSessionMode = null;
-  liveModelsLoaded = false;
 }
 
 function sendModelProgress(payload) {
@@ -1255,12 +981,30 @@ app.whenReady().then(() => {
     }
   }
   createWindow();
-  ensureOverlayWindow();
   ensureTray();
-  setupGlobalPttHook();
-  screen.on('display-metrics-changed', () => positionOverlayWindow());
-  screen.on('display-added', () => positionOverlayWindow());
-  screen.on('display-removed', () => positionOverlayWindow());
+
+  // 注册并启动实时转写模块
+  LiveTranscribeModule.register({
+    app,
+    mainWindow,
+    speechAsr,
+    getResourceBase,
+    getIconPath,
+    getIconImage,
+    resolveBundledPython,
+    getPythonScriptPath,
+    getModelPaths,
+    getStreamingModelPaths,
+    getPunctuationPaths,
+    getVadPaths,
+    onResult: (payload) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('live-transcribe-result', payload);
+      }
+    }
+  });
+
+  LiveTranscribeModule.start({ app });
 });
 
 app.on('window-all-closed', () => {
@@ -1275,10 +1019,8 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   forceQuit = true;
-  hideOverlay(true);
-  if (overlayWindow && !overlayWindow.isDestroyed()) {
-    overlayWindow.destroy();
-  }
+  // 停止实时转写模块
+  LiveTranscribeModule.stop();
 });
 
 app.on('activate', () => {
@@ -1634,147 +1376,25 @@ ipcMain.handle('llm-process', async (event, text, prefix = null) => {
 
 // 获取当前选择的文本
 ipcMain.handle('get-current-selection', async () => {
-  if (!globalPttHook) {
-    console.log('[Selection] Hook not initialized');
-    return { success: false, message: 'Selection hook 未初始化' };
+  const LiveTranscribeModule = require('./live-transcribe');
+  const pttManager = LiveTranscribeModule.PttManager;
+  const getCurrentSelection = pttManager && pttManager.getCurrentSelection;
+
+  if (!getCurrentSelection) {
+    console.log('[Selection] PTT Manager not available');
+    return { success: false, message: 'PTT Manager 未初始化' };
   }
 
   try {
     console.log('[Selection] Attempting to get current selection...');
-    const selection = globalPttHook.getCurrentSelection();
-    console.log('[Selection] Raw result:', selection);
-
-    if (selection && selection.text && selection.text.trim()) {
-      console.log('[Selection] Current selection:', selection.text.slice(0, 100));
-      return { success: true, text: selection.text };
-    }
-    console.log('[Selection] No valid text found in selection');
-    return { success: false, message: '没有选中的文本' };
+    const result = getCurrentSelection();
+    console.log('[Selection] Result:', result);
+    return result;
   } catch (error) {
     console.error('[Selection] Error:', error);
     return { success: false, message: error.message };
   }
 });
-
-ipcMain.on('ptt-overlay:update', (_event, payload) => {
-  if (!payload) return;
-  const { state, message, hint, autoHideMs, lock } = payload;
-  console.log('[ptt-overlay:update] Received:', { state, message, hint, overlayTimer: !!overlayTimer, overlayMessageCache });
-  if (state === 'idle') {
-    hideOverlay(true);
-    return;
-  }
-  if (state === 'recording') {
-    // If timer already running, update cached message only to avoid
-    // restarting timer; otherwise start it.
-    if (overlayTimer) {
-      overlayMessageCache = message || overlayMessageCache || '';
-      console.log('[ptt-overlay:update] Updated cache:', overlayMessageCache);
-      // immediately send an update so overlay displays new message
-      const formatted = formatDurationMs(Date.now() - overlayStartTime);
-      const durationHint = `按键录音 ${formatted}`;
-      sendOverlayPayload({ state: 'recording', message: overlayMessageCache || '', hint: durationHint, lock: Boolean(lock) });
-      return;
-    }
-    startOverlayTimer(message, hint, Boolean(lock));
-    return;
-  }
-  stopOverlayTimer();
-  updateOverlay(state || 'recording', message, hint, {
-    autoHideMs,
-    lock: Boolean(lock)
-  });
-});
-
-ipcMain.on('ptt-overlay:hide', () => hideOverlay());
-
-ipcMain.on('ptt-overlay:arm', (_event, enabled) => {
-  overlayArmed = Boolean(enabled);
-  if (!overlayArmed) {
-    overlayLocked = false;
-    hideOverlay(true);
-  }
-});
-
-// Debug: trigger overlay test payload (use from renderer devtools)
-ipcMain.on('ptt-overlay:test', () => {
-  try {
-    const now = Date.now();
-    const formatted = formatDurationMs(0);
-    sendOverlayPayload({ state: 'recording', message: `测试 overlay ${now}`, hint: `按键录音 ${formatted}` });
-  } catch (err) {
-    console.warn('ptt-overlay:test failed', err);
-  }
-});
-
-function buildLiveSessionRuntime(mode, payload = {}) {
-  console.log('===== [main] buildLiveSessionRuntime START =====');
-  console.log('[main] mode:', mode);
-  console.log('[main] payload?.manualRealtime:', payload?.manualRealtime);
-  console.log('[main] Boolean(payload?.manualRealtime):', Boolean(payload?.manualRealtime));
-
-  if (!modelExists()) {
-    return { success: false, message: 'SenseVoice 模型未就绪，请先下载' };
-  }
-  if (!streamingModelExists()) {
-    return { success: false, message: '流式 ZipFormer 模型未就绪，请先下载' };
-  }
-
-  const pythonPath = resolveBundledPython();
-  if (!pythonPath) {
-    return { success: false, message: PYTHON_NOT_FOUND_MESSAGE };
-  }
-
-  const { modelDir } = getModelPaths();
-  const senseVoice = resolveSenseVoiceFiles(modelDir);
-  if (!senseVoice) {
-    return { success: false, message: '未找到 SenseVoice 模型或 tokens.txt' };
-  }
-
-  const { modelDir: streamingDir } = getStreamingModelPaths();
-  const streaming = resolveStreamingZipformerComponents(streamingDir);
-  if (!streaming) {
-    return { success: false, message: '未找到 ZipFormer 流式模型完整文件（encoder/decoder/joiner/tokens）' };
-  }
-
-  const punctuationReady = punctuationModelExists();
-  const { modelPath: defaultVadModel } = getVadPaths();
-  const vadModelPath = fs.existsSync(defaultVadModel) ? defaultVadModel : '';
-  const vadOpt = payload?.vad || {};
-  const vadDefaults = DEFAULT_OPTIONS.vad.silero;
-  const sileroCfg = {
-    threshold: typeof vadOpt.threshold === 'number' ? vadOpt.threshold : vadDefaults.threshold,
-    minSilenceDuration:
-      typeof vadOpt.minSilence === 'number' ? vadOpt.minSilence : vadDefaults.minSilenceDuration,
-    minSpeechDuration:
-      typeof vadOpt.minSpeech === 'number' ? vadOpt.minSpeech : vadDefaults.minSpeechDuration,
-    maxSpeechDuration:
-      typeof vadOpt.maxSpeech === 'number' ? vadOpt.maxSpeech : vadDefaults.maxSpeechDuration
-  };
-
-  const runtime = {
-    device: payload?.micName,
-    numThreads: payload?.numThreads || 2,
-    numThreadsSecond: payload?.numThreadsSecond || payload?.numThreads || 4,
-    sampleRate: payload?.sampleRate || speechAsr.activeOptions?.sampleRate || 16000,
-    bufferSize: payload?.bufferSize || speechAsr.activeOptions?.bufferSize || 1600,
-    pythonPath,
-    manualRealtime: Boolean(payload?.manualRealtime),  // 实时 VAD+2pass 模式开关
-    vadMode: vadModelPath ? 'silero' : 'off',
-    vad: { silero: sileroCfg },
-    modelPaths: {
-      streaming,
-      secondPass: senseVoice,
-      vadModel: vadModelPath,
-      workingDir: getResourceBase(),
-      scriptPath: getPythonScriptPath()
-    }
-  };
-
-  console.log('[main] runtime.manualRealtime (final):', runtime.manualRealtime);
-  console.log('[main] buildLiveSessionRuntime END =====');
-  return { success: true, runtime, punctuationReady, vadReady: Boolean(vadModelPath) };
-}
 
 // 模型相关
 ipcMain.handle('check-model', async () => {
@@ -1885,218 +1505,6 @@ ipcMain.handle('open-vad-folder', async () => {
   }
 });
 
-// 实时转写：加载/释放模型（自动与按键模式）
-ipcMain.handle('live-load-models', async (_event, payload = {}) => {
-  const mode = payload?.mode === 'manual' ? 'manual' : 'auto';
-  console.log('===== [main] live-load-models START =====');
-  console.log('[main] payload.mode:', payload?.mode);
-  console.log('[main] normalized mode:', mode);
-  console.log('[main] payload.manualRealtime:', payload?.manualRealtime);
-  console.log('[main] payload.micName:', payload?.micName);
-  console.log('[main] payload.numThreads:', payload?.numThreads);
-
-  const built = buildLiveSessionRuntime(mode, payload);
-  if (!built.success) {
-    console.log('[main] buildLiveSessionRuntime failed:', built.message);
-    return built;
-  }
-
-  const { runtime, punctuationReady, vadReady } = built;
-  console.log('[main] runtime.manualRealtime:', runtime.manualRealtime);
-  console.log('[main] runtime.device:', runtime.device);
-  console.log('[main] punctuationReady:', punctuationReady);
-  console.log('[main] vadReady:', vadReady);
-
-  if (speechAsr.isRunning()) {
-    if (speechAsr.isManual() !== (mode === 'manual')) {
-      const switched = await speechAsr.switchMode(mode);
-      if (!switched?.success) {
-        return { success: false, message: switched?.message || '切换模式失败' };
-      }
-    }
-    liveSessionMode = mode;
-    liveModelsLoaded = true;
-    return { success: true, mode: liveSessionMode, punctuationReady, vadReady, reused: true };
-  }
-
-  try {
-    if (!punctuationReady) {
-      sendLiveResult({
-        type: 'log',
-        message: '未找到标点模型，将跳过标点增强。如需标点，请先下载标点模型'
-      });
-    } else {
-      sendLiveResult({ type: 'log', message: '标点模型已就绪' });
-    }
-
-    if (!vadReady) {
-      sendLiveResult({
-        type: 'log',
-        message: `未找到 VAD 模型，将仅使用端点检测。下载地址: ${VAD_MODEL_URL}`
-      });
-    }
-
-    const startResult = await speechAsr.live({
-      action: 'start',
-      mode,
-      startPaused: mode === 'auto',
-      autoStart: false,
-      ...runtime
-    });
-
-    if (!startResult?.success) {
-      return { success: false, message: startResult?.message || '加载实时模型失败' };
-    }
-
-    liveSessionMode = mode;
-    liveModelsLoaded = true;
-    sendLiveResult({
-      type: 'log',
-      message: mode === 'manual' ? '按键模式模型已加载，等待按键开始录音' : '自动模式模型已加载，点击开始录音'
-    });
-    return {
-      success: true,
-      mode: liveSessionMode,
-      punctuationReady,
-      vadReady,
-      reused: startResult.reused
-    };
-  } catch (err) {
-    return { success: false, message: err.message };
-  }
-});
-
-ipcMain.handle('live-release-models', async () => {
-  try {
-    // 释放模型时重置粘贴队列
-    resetPasteQueue();
-    if (speechAsr.isRunning()) {
-      if (speechAsr.isManual()) {
-        await speechAsr.stopManualSession();
-      } else {
-        await speechAsr.stop();
-      }
-    }
-    resetLiveSessionState();
-    hideOverlay(true);
-    return { success: true };
-  } catch (err) {
-    return { success: false, message: err.message };
-  }
-});
-
-ipcMain.handle('live-start-capture', async (_event, payload = {}) => {
-  const mode = payload?.mode === 'manual' ? 'manual' : 'auto';
-  console.log('===== [main] live-start-capture START =====');
-  console.log('[main] payload.mode:', payload?.mode);
-  console.log('[main] normalized mode:', mode);
-  console.log('[main] payload.manualRealtime:', payload?.manualRealtime);
-  console.log('[main] payload.micName:', payload?.micName);
-
-  const built = buildLiveSessionRuntime(mode, payload);
-  if (!built.success) {
-    console.log('[main] buildLiveSessionRuntime failed:', built.message);
-    return built;
-  }
-
-  const { runtime, punctuationReady, vadReady } = built;
-  console.log('[main] runtime.manualRealtime:', runtime.manualRealtime);
-  console.log('[main] runtime.device:', runtime.device);
-  console.log('[main] speechAsr.isRunning():', speechAsr.isRunning());
-  console.log('[main] speechAsr.isManual():', speechAsr.isManual());
-
-  if (speechAsr.isRunning()) {
-    try {
-      if (speechAsr.isManual() !== (mode === 'manual')) {
-        const switched = await speechAsr.switchMode(mode);
-        if (!switched?.success) {
-          return { success: false, message: switched?.message || '切换模式失败' };
-        }
-      }
-      // 确保 manualRealtime 参数和 modelPaths 都被传递（重启进程时需要完整的 runtime）
-      const reuse = await speechAsr.live({ action: 'start', mode, autoStart: true, manualRealtime: runtime.manualRealtime, modelPaths: runtime.modelPaths });
-      liveSessionMode = mode;
-      liveModelsLoaded = true;
-      return reuse;
-    } catch (err) {
-      return { success: false, message: err.message };
-    }
-  }
-
-  try {
-    if (!punctuationReady) {
-      sendLiveResult({
-        type: 'log',
-        message: '未找到标点模型，将跳过标点增强。如需标点，请先下载标点模型'
-      });
-    } else {
-      sendLiveResult({ type: 'log', message: '标点模型已就绪' });
-    }
-    if (!vadReady) {
-      sendLiveResult({
-        type: 'log',
-        message: `未找到 VAD 模型，将仅使用端点检测。下载地址: ${VAD_MODEL_URL}`
-      });
-    }
-
-    const startResult = await speechAsr.live({
-      action: 'start',
-      mode,
-      autoStart: true,
-      startPaused: false,
-      ...runtime
-    });
-
-    if (!startResult?.success) {
-      return { success: false, message: startResult?.message || '启动实时识别失败' };
-    }
-    liveSessionMode = mode;
-    liveModelsLoaded = true;
-    return startResult;
-  } catch (err) {
-    return { success: false, message: err.message };
-  }
-});
-
-ipcMain.handle('live-stop-capture', async (_event, payload = {}) => {
-  const mode = payload?.mode === 'manual' ? 'manual' : 'auto';
-  if (!liveModelsLoaded || liveSessionMode !== mode) {
-    return { success: false, message: '当前没有对应模式的实时会话' };
-  }
-
-  try {
-    if (mode === 'manual' && payload?.source !== 'key-up') {
-      return { success: false, message: '仅按键松开时可结束按键录音' };
-    }
-    // 停止时重置粘贴队列，避免等待队列中积压的粘贴任务
-    resetPasteQueue();
-    if (!speechAsr.isRunning()) {
-      return { success: true };
-    }
-    return await speechAsr.live({ action: 'stop', mode });
-  } catch (err) {
-    return { success: false, message: err.message };
-  }
-});
-
-// 实时转写：切换麦克风设备（不重启进程）
-ipcMain.handle('live-switch-device', async (_event, payload = {}) => {
-  if (!speechAsr.isRunning()) {
-    return { success: false, message: '当前没有实时会话在运行' };
-  }
-  try {
-    const target = payload?.micName || payload?.device || payload?.index || '';
-    const result = await speechAsr.switchDevice(target);
-    if (!result?.success) {
-      return { success: false, message: result?.message || '切换麦克风失败' };
-    }
-    sendLiveResult({ type: 'log', message: `已请求切换麦克风: ${target || '默认设备'}` });
-    return { success: true };
-  } catch (err) {
-    return { success: false, message: err.message };
-  }
-});
-
 // 保存录音文件
 ipcMain.handle('save-recording', async (_event, arrayBuffer, extension = 'webm') => {
   const recordingsDir = path.join(app.getPath('userData'), 'recordings');
@@ -2112,374 +1520,8 @@ ipcMain.handle('save-recording', async (_event, arrayBuffer, extension = 'webm')
   }
 });
 
-// Push-to-talk 单次转写
-ipcMain.handle('push-to-talk-asr', async (_event, arrayBuffer, mimeType = 'audio/webm') => {
-  try {
-    if (!modelExists()) {
-      return { success: false, message: 'SenseVoice 模型未就绪，请先下载' };
-    }
-    if (!streamingModelExists()) {
-      return { success: false, message: '流式 ZipFormer 模型未就绪，请先下载' };
-    }
-    const pythonPath = resolveBundledPython();
-    if (!pythonPath) {
-      return { success: false, message: PYTHON_NOT_FOUND_MESSAGE };
-    }
-    const { modelDir } = getModelPaths();
-    const { modelDir: streamingDir } = getStreamingModelPaths();
-    const senseVoice = resolveSenseVoiceFiles(modelDir);
-    const streaming = resolveStreamingZipformerComponents(streamingDir);
-    if (!senseVoice || !streaming) {
-      return { success: false, message: '模型文件不完整，请检查 SenseVoice 与 ZipFormer' };
-    }
-
-    const tmpDir = path.join(app.getPath('userData'), 'ptt-cache');
-    fs.mkdirSync(tmpDir, { recursive: true });
-    const rawExt = mimeType && mimeType.includes('wav') ? 'wav' : 'webm';
-    const rawPath = path.join(tmpDir, `ptt-${Date.now()}.${rawExt}`);
-    const wavPath = path.join(tmpDir, `ptt-${Date.now()}.wav`);
-    fs.writeFileSync(rawPath, Buffer.from(arrayBuffer));
-
-    let convertStderr = '';
-    const convertCode = await new Promise((resolve) => {
-      const ffmpegConvert = spawn(ffmpegInstaller.path, ['-y', '-i', rawPath, '-ar', '16000', '-ac', '1', wavPath], {
-        env: withFfmpegPath()
-      });
-      ffmpegConvert.stderr.on('data', (d) => (convertStderr += d.toString()));
-      ffmpegConvert.on('close', resolve);
-    });
-    if (convertCode !== 0) {
-      return {
-        success: false,
-        message: '音频转换失败，检查 ffmpeg 是否可用',
-        detail: convertStderr || `ffmpeg exit ${convertCode}`
-      };
-    }
-
-    const { modelPath: defaultVadModel } = getVadPaths();
-    const vadModelPath = fs.existsSync(defaultVadModel) ? defaultVadModel : '';
-
-    const asrResult = await speechAsr.transcribeFile(wavPath, {
-      modelPaths: {
-        streaming,
-        secondPass: senseVoice,
-        vadModel: vadModelPath,
-        workingDir: getResourceBase(),
-        scriptPath: getPythonScriptPath()
-      },
-      pythonPath
-    });
-
-    return asrResult;
-  } catch (err) {
-    return { success: false, message: err.message };
-  }
-});
-
-// Push-to-talk：SDK 录音（仅第二遍）
-ipcMain.handle('ptt-start', async (_event, options = {}) => {
-  try {
-    if (!modelExists()) {
-      return { success: false, message: 'SenseVoice 模型未就绪，请先下载' };
-    }
-    if (!streamingModelExists()) {
-      return { success: false, message: '流式 ZipFormer 模型未就绪，请先下载' };
-    }
-    const pythonPath = resolveBundledPython();
-    if (!pythonPath) {
-      return { success: false, message: PYTHON_NOT_FOUND_MESSAGE };
-    }
-    const { modelDir } = getModelPaths();
-    const { modelDir: streamingDir } = getStreamingModelPaths();
-    const senseVoice = resolveSenseVoiceFiles(modelDir);
-    const streaming = resolveStreamingZipformerComponents(streamingDir);
-    if (!senseVoice || !streaming) {
-      return { success: false, message: '模型文件不完整，请检查 SenseVoice 与 ZipFormer' };
-    }
-    const { modelPath: defaultVadModel } = getVadPaths();
-    const vadModelPath = fs.existsSync(defaultVadModel) ? defaultVadModel : '';
-    const start = await speechAsr.live({
-      action: 'start',
-      mode: 'manual',
-      autoStart: true,
-      device: options?.micName,
-      modelPaths: {
-        streaming,
-        secondPass: senseVoice,
-        vadModel: vadModelPath,
-        workingDir: getResourceBase(),
-        scriptPath: getPythonScriptPath()
-      },
-      pythonPath
-    });
-    return start;
-  } catch (err) {
-    return { success: false, message: err.message };
-  }
-});
-
-ipcMain.handle('ptt-stop', async () => {
-  try {
-    const stop = await speechAsr.live({ action: 'stop', mode: 'manual' });
-    return stop;
-  } catch (err) {
-    return { success: false, message: err.message };
-  }
-});
-
-ipcMain.handle('ptt-end', async () => {
-  try {
-    return await speechAsr.stopManualSession();
-  } catch (err) {
-    return { success: false, message: err.message };
-  }
-});
-
-// 实时转写：开始会话（Python 直接采集麦克风）
-ipcMain.handle('start-live-transcribe', async (_event, options = {}) => {
-  if (speechAsr.isRunning()) {
-    return { success: false, message: '已有实时会话在运行' };
-  }
-
-  if (!modelExists()) {
-    return { success: false, message: 'SenseVoice 模型未就绪，请先下载' };
-  }
-  if (!streamingModelExists()) {
-    return { success: false, message: '流式 ZipFormer 模型未就绪，请先下载' };
-  }
-
-  const pythonPath = resolveBundledPython();
-  if (!pythonPath) {
-    return { success: false, message: PYTHON_NOT_FOUND_MESSAGE };
-  }
-
-  const { modelDir } = getModelPaths();
-  const { modelDir: streamingDir } = getStreamingModelPaths();
-  const senseVoice = resolveSenseVoiceFiles(modelDir);
-  const streaming = resolveStreamingZipformerComponents(streamingDir);
-
-  if (!senseVoice) {
-    return { success: false, message: '未找到 SenseVoice 模型或 tokens.txt' };
-  }
-  if (!streaming) {
-    return { success: false, message: '未找到 ZipFormer 流式模型完整文件（encoder/decoder/joiner/tokens）' };
-  }
-
-  const vadOpt = options?.vad || {};
-  const { modelPath: defaultVadModel } = getVadPaths();
-  const vadModelPath = vadOpt.model || (fs.existsSync(defaultVadModel) ? defaultVadModel : '');
-  const vadDefaults = DEFAULT_OPTIONS.vad.silero;
-  const sileroCfg = {
-    threshold: typeof vadOpt.threshold === 'number' ? vadOpt.threshold : vadDefaults.threshold,
-    minSilenceDuration:
-      typeof vadOpt.minSilence === 'number' ? vadOpt.minSilence : vadDefaults.minSilenceDuration,
-    minSpeechDuration:
-      typeof vadOpt.minSpeech === 'number' ? vadOpt.minSpeech : vadDefaults.minSpeechDuration,
-    maxSpeechDuration:
-      typeof vadOpt.maxSpeech === 'number' ? vadOpt.maxSpeech : vadDefaults.maxSpeechDuration
-  };
-
-  if (!vadModelPath) {
-    sendLiveResult({
-      type: 'log',
-      message: `未找到 VAD 模型，将使用端点检测。下载地址: ${VAD_MODEL_URL}`
-    });
-  }
-
-  try {
-    const startResult = await speechAsr.start({
-      device: options?.micName,
-      numThreads: options?.numThreads || 2,
-      numThreadsSecond: options?.numThreadsSecond || options?.numThreads || 4,
-      sampleRate: options?.sampleRate || speechAsr.activeOptions?.sampleRate || 16000,
-      bufferSize: options?.bufferSize || speechAsr.activeOptions?.bufferSize || 1600,
-      pythonPath,
-      vadMode: vadModelPath ? 'silero' : 'off',
-      vad: {
-        silero: sileroCfg
-      },
-      modelPaths: {
-        streaming,
-        secondPass: senseVoice,
-        vadModel: vadModelPath,
-        workingDir: getResourceBase(),
-        scriptPath: getPythonScriptPath()
-      }
-    });
-
-    if (!startResult?.success) {
-      return { success: false, message: startResult?.message || '启动实时识别失败' };
-    }
-    return { success: true };
-  } catch (err) {
-    return { success: false, message: err.message };
-  }
-});
-
-// 实时转写：停止会话
-ipcMain.handle('stop-live-transcribe', async () => {
-  await speechAsr.stop();
-  return { success: true };
-});
-
-// 实时转写：推送音频块（新模式不需要）
-ipcMain.handle('push-live-chunk', async () => {
-  return { success: false, message: 'Python 端麦克风模式无需推送音频块' };
-});
-
-async function handleLiveChunk(inputPath, wavPath, chunkIndex, mimeType = 'audio/webm') {
-  if (!speechAsr.isRunning()) return;
-
-  const isWebm = mimeType.includes('webm');
-
-  // 不再拼接头，直接用当前块
-  let effectiveInput = inputPath;
-
-  // 转换为16k单声道wav
-  let convertStderr = '';
-  const convertCode = await new Promise((resolve) => {
-    const ffmpegConvert = spawn(ffmpegInstaller.path, ['-y', '-i', effectiveInput, '-ar', '16000', '-ac', '1', wavPath], {
-      env: withFfmpegPath()
-    });
-    ffmpegConvert.stderr.on('data', (d) => (convertStderr += d.toString()));
-    ffmpegConvert.on('close', resolve);
-  });
-  if (convertCode !== 0) {
-    sendLiveResult({
-      type: 'error',
-      message: '音频转换失败，检查 ffmpeg 是否可用',
-      detail: convertStderr || `ffmpeg exit ${convertCode}`
-    });
-    // 清理临时文件
-    try {
-      if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
-      if (fs.existsSync(wavPath)) fs.unlinkSync(wavPath);
-    } catch (err) {
-      console.error('清理转换失败临时文件失败', err);
-    }
-    return;
-  }
-
-  // 使用 volumedetect 简易 VAD 过滤静音
-  const volOutput = [];
-  let volStderr = '';
-  const volCode = await new Promise((resolve) => {
-    const volProcess = spawn(ffmpegInstaller.path, ['-i', wavPath, '-af', 'volumedetect', '-f', 'null', '-'], {
-      stdio: ['ignore', 'ignore', 'pipe'],
-      env: withFfmpegPath()
-    });
-    volProcess.stderr.on('data', (d) => {
-      const s = d.toString();
-      volOutput.push(s);
-      volStderr += s;
-    });
-    volProcess.on('close', resolve);
-  });
-  if (volCode !== 0) {
-    sendLiveResult({ type: 'error', message: 'VAD 检测失败', detail: volStderr || `ffmpeg exit ${volCode}` });
-    // 清理临时文件
-    try {
-      if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
-      if (fs.existsSync(wavPath)) fs.unlinkSync(wavPath);
-    } catch (err) {
-      console.error('清理VAD失败临时文件失败', err);
-    }
-    return;
-  }
-  const meanVolumeLine = volOutput.join('\n').split('\n').find((l) => l.includes('mean_volume'));
-  let meanVolume = -100;
-  if (meanVolumeLine) {
-    const match = meanVolumeLine.match(/mean_volume:\s*([-\d\.]+)/);
-    if (match) {
-      meanVolume = parseFloat(match[1]);
-    }
-  }
-  if (meanVolume < -60) {
-    sendLiveResult({ type: 'skip', message: `静音片段已跳过 (mean_volume=${meanVolume} dB)` });
-    // 清理临时文件
-    try {
-      if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
-      if (fs.existsSync(wavPath)) fs.unlinkSync(wavPath);
-    } catch (err) {
-      console.error('清理静音片段临时文件失败', err);
-    }
-    return;
-  }
-  sendLiveResult({ type: 'log', message: `检测到语音片段，mean_volume=${meanVolume} dB` });
-
-  // 调用 Python ASR（无说话人分离）
-  const sherpaPath = getResourceBase();
-  const pythonScript = path.join(sherpaPath, 'scripts', 'diarization_asr_electron_helper.py');
-  const { modelDir } = getModelPaths();
-  const args = [
-    pythonScript,
-    wavPath,
-    'false', // 关闭分离
-    2,       // 线程
-    0.9,
-    'null'
-  ];
-
-  const pythonPath = resolveBundledPython();
-  if (!pythonPath) {
-    sendLiveResult({ type: 'error', message: PYTHON_NOT_FOUND_MESSAGE });
-    try {
-      if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
-      if (fs.existsSync(wavPath)) fs.unlinkSync(wavPath);
-    } catch (err) {
-      console.error('清理缺少 Python 时的临时文件失败', err);
-    }
-    return;
-  }
-
-  const pythonProcess = spawn(pythonPath, args, {
-    cwd: sherpaPath,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    env: withFfmpegPath({
-      SENSE_VOICE_MODEL_DIR: modelDir,
-      FFMPEG_BIN: ffmpegInstaller.path
-    })
-  });
-
-  let stdout = '';
-  let stderr = '';
-  pythonProcess.stdout.on('data', (d) => (stdout += d.toString()));
-  pythonProcess.stderr.on('data', (d) => (stderr += d.toString()));
-
-  const exitCode = await new Promise((resolve) => pythonProcess.on('close', resolve));
-
-  if (exitCode !== 0) {
-    sendLiveResult({ type: 'error', message: `ASR 退出码 ${exitCode}: ${stderr || stdout}` });
-    // 清理临时文件
-    try {
-      if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
-      if (fs.existsSync(wavPath)) fs.unlinkSync(wavPath);
-    } catch (err) {
-      console.error('清理错误片段临时文件失败', err);
-    }
-    return;
-  }
-
-  try {
-    const result = parseProcessingResults(stdout);
-    if (result?.results?.length) {
-      sendLiveResult({ type: 'result', segments: result.results });
-    } else {
-      sendLiveResult({ type: 'log', message: '未从当前片段解析出文本' });
-    }
-  } catch (err) {
-    console.error('实时转写解析失败', err, stderr);
-    sendLiveResult({ type: 'error', message: `实时转写解析失败: ${err.message || err}`, detail: stderr || stdout });
-  } finally {
-    // 处理完成后清理临时文件
-    try {
-      if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
-      if (fs.existsSync(wavPath)) fs.unlinkSync(wavPath);
-    } catch (err) {
-      console.error('清理临时文件失败', err);
-    }
-  }
-}
+// 实时转写相关函数现在由 live-transcribe 模块处理
+// 这些旧的 handlers 已被移除到 live-transcribe/main/handlers.js
 
 function sendLiveResult(payload) {
   if (mainWindow) {
