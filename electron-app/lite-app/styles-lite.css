@@ -151,6 +151,14 @@ body {
   overflow-y: auto;
 }
 
+.page {
+  display: none;
+}
+
+.page.active {
+  display: block;
+}
+
 .hero {
   background: linear-gradient(135deg, #ffe5c4, #f9b574);
   border-radius: 22px;
@@ -225,6 +233,10 @@ body {
   margin-top: 18px;
 }
 
+.home-grid {
+  margin-top: 12px;
+}
+
 .panel-grid.wide {
   grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
 }
@@ -269,6 +281,7 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  text-align: left;
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -288,6 +301,7 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
+  text-align: left;
 }
 
 .persona-icon {
@@ -581,6 +595,55 @@ button.ghost {
 .progress-text {
   color: var(--muted);
   font-size: 13px;
+}
+
+.status-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.status-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fbfbff;
+}
+
+.status-title {
+  font-weight: 700;
+}
+
+.status-desc {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.latest-card {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+  background: #fffdf9;
+}
+
+.latest-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.latest-text {
+  margin-top: 10px;
+  line-height: 1.6;
+  color: var(--text);
+  font-size: 14px;
+  min-height: 80px;
 }
 
 .row {

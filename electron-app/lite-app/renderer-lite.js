@@ -14,7 +14,14 @@ const state = {
   capturePromise: null,
   releasePromise: null,
   autopasteBuffer: '',
-  lastFirstPassLength: 0
+  lastFirstPassLength: 0,
+  autoLoadTriggered: false,
+  stats: {
+    totalChars: 0,
+    sessions: 0,
+    lastText: '',
+    lastPersona: ''
+  }
 };
 
 const personaState = {
@@ -27,44 +34,54 @@ const personaState = {
 
 const defaultPersonas = [
   {
+    id: 'default',
+    name: '默认风格',
+    icon: '🎙️',
+    description: '保持客观简洁，直给结果。'
+  },
+  {
     id: 'translator',
     name: '自动翻译',
     icon: '🌐',
-    description: '如果文本为中文，请翻译成自然流畅的英文；如已是英文则润色但不改语义，专有名词保留原样。'
+    description: '中文转自然英文，英文润色但不改语义，专有名词保持原样。'
   },
   {
-    id: 'notes',
-    name: '会议纪要',
-    icon: '🗒️',
-    description: '提炼要点并生成行动项，使用项目符号，保持简洁有序。'
-  },
-  {
-    id: 'creator',
-    name: '灵感火花',
-    icon: '✨',
-    description: '在不改变事实的前提下，用更有活力的表达改写内容，保持亲和力和节奏感。'
-  },
-  {
-    id: 'cmd',
-    name: '命令行',
+    id: 'cmd-master',
+    name: '命令行大神',
     icon: '💻',
-    description: '将语音转成终端命令或代码片段，谨慎补全参数，并用一句话说明含义。'
+    description: '将语音转为命令/代码，谨慎补全参数并简述作用。'
+  },
+  {
+    id: 'office',
+    name: '职场大佬',
+    icon: '🧳',
+    description: '正式、稳重、条理清晰，适合职场沟通。'
+  },
+  {
+    id: 'wild',
+    name: '发疯文学',
+    icon: '🔥',
+    description: '夸张有趣，节奏快，保持核心信息但更抓眼。'
   }
 ];
 
 const el = {};
 let cleanupFns = [];
 
-function init() {
+async function init() {
   cacheElements();
   wireNavigation();
-  initPersonas();
+  setActivePage('homePage');
+  await initPersonas();
   bindEvents();
   wireProgressListeners();
   hydrateDefaults();
+  updateHomeStatuses();
+  updateStatsDisplay();
+  listenPersonaUpdates();
   refreshMicStatus();
   refreshDevices();
-  refreshModelStatus();
+  refreshModelStatus().then(autoLoadModelsOnBoot);
   attachLiveListeners();
   reportApiAvailability();
   appendLog('Lite 界面就绪：人设与实时转写功能保持一致');
@@ -89,10 +106,23 @@ function cacheElements() {
   el.duplicatePersonaBtn = document.getElementById('duplicatePersonaBtn');
   el.savePersonaBtn = document.getElementById('savePersonaBtn');
   el.navItems = document.querySelectorAll('.nav-item');
+  el.pages = document.querySelectorAll('.page');
+  el.statChars = document.getElementById('statChars');
+  el.statSessions = document.getElementById('statSessions');
+  el.statAutoPaste = document.getElementById('statAutoPaste');
+  el.statPersona = document.getElementById('statPersona');
+  el.homeModelStatus = document.getElementById('homeModelStatus');
+  el.homeMicStatus = document.getElementById('homeMicStatus');
+  el.homeLlmStatus = document.getElementById('homeLlmStatus');
+  el.homePersonaPill = document.getElementById('homePersonaPill');
+  el.homeLatestPersona = document.getElementById('homeLatestPersona');
+  el.homeLatestLength = document.getElementById('homeLatestLength');
+  el.lastTranscriptionText = document.getElementById('lastTranscriptionText');
 
   el.micStatusBadge = document.getElementById('micStatusBadge');
   el.modelSummary = document.getElementById('modelSummary');
   el.modelSummarySecondary = document.getElementById('modelSummarySecondary');
+  el.modelProgressTextHero = document.getElementById('modelProgressTextHero');
   el.modelProgressText = document.getElementById('modelProgressText');
   el.micSelect = document.getElementById('micSelect');
   el.refreshMicBtn = document.getElementById('refreshMicBtn');
@@ -115,14 +145,16 @@ function wireNavigation() {
   if (!el.navItems) return;
   el.navItems.forEach((btn) => {
     btn.addEventListener('click', () => {
-      const targetId = btn.dataset.target;
-      el.navItems.forEach((b) => b.classList.remove('active'));
-      btn.classList.add('active');
-      if (targetId) {
-        document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
+      setActivePage(btn.dataset.target);
     });
   });
+}
+
+function setActivePage(pageId) {
+  if (!pageId) return;
+  el.navItems?.forEach((b) => b.classList.toggle('active', b.dataset.target === pageId));
+  el.pages?.forEach((section) => section.classList.toggle('active', section.dataset.page === pageId));
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function bindEvents() {
@@ -142,12 +174,15 @@ function bindEvents() {
 
   el.autoPasteToggle?.addEventListener('change', (e) => {
     state.autoPaste = e.target.checked;
+    updateHomeStatuses();
+    updateStatsDisplay();
   });
   el.manualRealtimeToggle?.addEventListener('change', (e) => {
     state.manualRealtime = e.target.checked;
   });
   el.llmToggle?.addEventListener('change', (e) => {
     state.enableLlm = e.target.checked;
+    updateHomeStatuses();
   });
 
   el.addPersonaBtn?.addEventListener('click', () => createPersona());
@@ -158,49 +193,26 @@ function bindEvents() {
   el.personaDescription?.addEventListener('input', handlePersonaDraftChange);
 }
 
-function initPersonas() {
-  const stored = loadPersonasFromStorage();
-  personaState.personas = stored?.length ? stored : defaultPersonas.slice();
-  const active =
-    loadActivePersonaId() ||
-    personaState.personas[0]?.id ||
-    defaultPersonas[0]?.id;
-  personaState.activeId = active;
-  renderPersonaList();
-  renderPersonaDetail();
-}
-
-function loadPersonasFromStorage() {
+async function initPersonas() {
+  let remote = null;
   try {
-    const saved = localStorage.getItem(personaState.storageKey);
-    return saved ? JSON.parse(saved) : null;
-  } catch {
-    return null;
-  }
-}
-
-function savePersonasToStorage() {
-  try {
-    localStorage.setItem(personaState.storageKey, JSON.stringify(personaState.personas));
-  } catch (err) {
-    console.warn('Failed to persist personas', err);
-  }
-}
-
-function loadActivePersonaId() {
-  try {
-    return localStorage.getItem(personaState.activeKey);
-  } catch {
-    return null;
-  }
-}
-
-function saveActivePersonaId(id) {
-  try {
-    localStorage.setItem(personaState.activeKey, id || '');
+    remote = await window.liveApp?.getPersonas?.();
   } catch {
     // ignore
   }
+  const personas = Array.isArray(remote?.personas) && remote.personas.length ? remote.personas : defaultPersonas.slice();
+  const fallbackId = personas[0]?.id || defaultPersonas[0]?.id;
+  const active = remote?.activeId && personas.some((p) => p.id === remote.activeId) ? remote.activeId : fallbackId;
+
+  personaState.personas = personas;
+  personaState.activeId = active;
+
+  const activePersona = getActivePersona();
+  if (activePersona) {
+    state.stats.lastPersona = activePersona.name || '';
+  }
+  renderPersonaList();
+  renderPersonaDetail();
 }
 
 function getActivePersona() {
@@ -221,7 +233,6 @@ function renderPersonaList() {
           <div class="persona-desc">${escapeHtml(persona.description || '')}</div>
         </div>
       </div>
-      <span class="pill">人设</span>
     `;
     item.addEventListener('click', () => setActivePersona(persona.id));
     el.personaList.appendChild(item);
@@ -248,7 +259,7 @@ function renderIconGrid(selected) {
       const persona = getActivePersona();
       if (persona) {
         persona.icon = icon;
-        savePersonasToStorage();
+        persistPersonas();
         renderPersonaList();
         renderIconGrid(icon);
         updateHeroPersona(persona);
@@ -259,11 +270,18 @@ function renderIconGrid(selected) {
 }
 
 function setActivePersona(id) {
+  if (!id) return;
   personaState.activeId = id;
-  saveActivePersonaId(id);
   renderPersonaList();
   renderPersonaDetail();
   appendLog(`人设切换为：${getActivePersona()?.name || id}`);
+  persistPersonas();
+  window.liveApp?.setActivePersona?.(id);
+}
+
+function persistPersonas() {
+  const payload = { personas: personaState.personas, activeId: personaState.activeId };
+  window.liveApp?.savePersonas?.(payload);
 }
 
 function handlePersonaDraftChange() {
@@ -279,7 +297,7 @@ function savePersonaForm() {
   if (!persona) return;
   persona.name = (el.personaNameInput?.value || persona.name || '未命名人设').trim();
   persona.description = (el.personaDescription?.value || persona.description || '').trim();
-  savePersonasToStorage();
+  persistPersonas();
   renderPersonaList();
   renderPersonaDetail();
   appendLog(`已保存人设：${persona.name}`);
@@ -293,7 +311,7 @@ function createPersona() {
     description: '写下希望 AI 遵守的语气、格式或约束。'
   };
   personaState.personas.unshift(newPersona);
-  savePersonasToStorage();
+  persistPersonas();
   setActivePersona(newPersona.id);
 }
 
@@ -309,7 +327,7 @@ function duplicatePersona() {
     name: `${current.name} 副本`
   };
   personaState.personas.unshift(clone);
-  savePersonasToStorage();
+  persistPersonas();
   setActivePersona(clone.id);
 }
 
@@ -319,6 +337,10 @@ function updateHeroPersona(persona) {
     el.activePersonaDesc.textContent =
       persona?.description || '写下希望 AI 遵守的语气、格式或约束。';
   }
+  if (el.statPersona) el.statPersona.textContent = persona?.name || '人设';
+  if (el.homePersonaPill) el.homePersonaPill.textContent = persona?.name || '人设';
+  if (el.homeLatestPersona) el.homeLatestPersona.textContent = persona?.name || '人设';
+  state.stats.lastPersona = persona?.name || state.stats.lastPersona;
 }
 
 function wireProgressListeners() {
@@ -349,6 +371,8 @@ function hydrateDefaults() {
     if (el.autoPasteToggle) el.autoPasteToggle.checked = state.autoPaste;
     if (el.manualRealtimeToggle) el.manualRealtimeToggle.checked = state.manualRealtime;
     if (el.llmToggle) el.llmToggle.checked = state.enableLlm;
+    updateHomeStatuses();
+    updateStatsDisplay();
   });
 
   window.liveApp?.getAppMode?.().then((info) => {
@@ -364,6 +388,7 @@ async function refreshMicStatus() {
     const status = res?.status || 'unknown';
     state.micStatus = status;
     setBadge(el.micStatusBadge, statusLabel(status), statusBadgeClass(status));
+    updateHomeStatuses();
     appendLog(`麦克风权限：${statusLabel(status)}`);
   } catch (err) {
     setBadge(el.micStatusBadge, '读取失败', 'error');
@@ -377,6 +402,7 @@ async function requestMicPermission() {
     const status = res?.status || 'unknown';
     state.micStatus = status;
     setBadge(el.micStatusBadge, statusLabel(status), statusBadgeClass(status));
+    updateHomeStatuses();
     appendLog(`请求权限：${statusLabel(status)}`);
   } catch (err) {
     setBadge(el.micStatusBadge, '请求失败', 'error');
@@ -432,9 +458,22 @@ async function refreshModelStatus() {
     setModelRow('punct', punct);
     setModelRow('vad', vad);
     updateModelSummary();
+    updateHomeStatuses();
   } catch (err) {
     appendLog(`模型检测失败: ${err.message || err}`, 'error');
   }
+}
+
+async function autoLoadModelsOnBoot() {
+  if (state.autoLoadTriggered) return;
+  state.autoLoadTriggered = true;
+  const ready = state.models.sense && state.models.streaming;
+  if (!ready) {
+    appendLog('自动加载跳过：必需模型未就绪', 'warn');
+    return;
+  }
+  appendLog('检测到模型就绪，自动加载中...');
+  await loadLiveModels();
 }
 
 function setModelRow(key, ok) {
@@ -452,26 +491,31 @@ function setModelRow(key, ok) {
 
 function updateModelSummary() {
   const ready = state.models.sense && state.models.streaming;
-  const message = ready ? '必需模型已就绪' : '缺少必需模型';
+  const message = ready ? '模型已就绪' : '缺少必需模型';
   setBadge(el.modelSummary, message, ready ? 'success' : 'warn');
   if (el.modelSummarySecondary) {
     setBadge(el.modelSummarySecondary, message, ready ? 'success' : 'warn');
   }
+  setPill(el.homeModelStatus, ready ? '已就绪' : '缺少模型', ready ? 'success' : 'warn');
 }
 
 function updateProgressText(label, payload) {
-  if (!el.modelProgressText) return;
+  const setText = (text) => {
+    if (el.modelProgressText) el.modelProgressText.textContent = text;
+    if (el.modelProgressTextHero) el.modelProgressTextHero.textContent = text;
+  };
+
   if (!payload || payload.status === 'done' || payload.status === 'completed') {
-    el.modelProgressText.textContent = `${label}: 完成`;
+    setText(`${label}: 完成`);
     return;
   }
   if (payload.status === 'error') {
-    el.modelProgressText.textContent = `${label}: ${payload.message || '下载失败'}`;
+    setText(`${label}: ${payload.message || '下载失败'}`);
     return;
   }
   const pct = payload.percent != null ? `${payload.percent}%` : '';
   const msg = payload.message || payload.status || '下载中';
-  el.modelProgressText.textContent = `${label}: ${msg} ${pct}`;
+  setText(`${label}: ${msg} ${pct}`);
 }
 
 async function downloadModelByKey(key) {
@@ -537,6 +581,22 @@ function attachLiveListeners() {
   if (window.liveTranscribe.onGlobalPttStop) {
     window.liveTranscribe.onGlobalPttStop((payload) => handleGlobalPttStop(payload));
   }
+}
+
+function listenPersonaUpdates() {
+  if (!window.liveApp?.onPersonaUpdated) return;
+  window.liveApp.onPersonaUpdated((payload) => {
+    if (!payload || !Array.isArray(payload.personas)) return;
+    personaState.personas = payload.personas;
+    const fallbackId = personaState.personas[0]?.id || personaState.activeId;
+    personaState.activeId =
+      payload.activeId && personaState.personas.some((p) => p.id === payload.activeId)
+        ? payload.activeId
+        : fallbackId;
+    renderPersonaList();
+    renderPersonaDetail();
+    updateStatsDisplay();
+  });
 }
 
 function handleLiveResult(payload) {
@@ -703,10 +763,12 @@ function updateFirstPass(text) {
 
 async function updateSecondPass(payload) {
   const text = payload?.segments?.[0]?.text || '';
-  updateSecondPassText(text || '无结果');
+  let finalText = text || '';
+  updateSecondPassText(finalText || '无结果');
 
-  if (!text) {
-    sendOverlayState('done', text, '识别完成', { autoHideMs: 1500 });
+  if (!finalText) {
+    recordTranscription(finalText);
+    sendOverlayState('done', finalText, '识别完成', { autoHideMs: 1500 });
     return;
   }
 
@@ -728,6 +790,7 @@ async function updateSecondPass(payload) {
 
       if (llmResult?.success && llmResult?.text) {
         const processedText = llmResult.text;
+        finalText = processedText;
         appendLog(`[LLM] AI 助手处理结果: ${processedText}`);
         updateSecondPassText(processedText);
         await pasteSecondPassResult(processedText);
@@ -740,10 +803,11 @@ async function updateSecondPass(payload) {
       await pasteSecondPassResult(text);
     }
   } else {
-    await pasteSecondPassResult(text);
+    await pasteSecondPassResult(finalText);
   }
 
-  sendOverlayState('done', text, '识别完成', { autoHideMs: 1500 });
+  recordTranscription(finalText);
+  sendOverlayState('done', finalText, '识别完成', { autoHideMs: 1500 });
 }
 
 function updateSecondPassText(text) {
@@ -817,6 +881,56 @@ function setBadge(node, text, level = 'muted') {
   node.classList.remove('success', 'warn', 'error', 'muted');
   node.classList.add(level);
   node.textContent = text;
+}
+
+function setPill(node, text, level = 'muted') {
+  if (!node) return;
+  node.classList.remove('success', 'warn', 'error', 'muted');
+  node.classList.add(level);
+  node.textContent = text;
+}
+
+function formatNumber(num) {
+  const safe = Number.isFinite(num) ? num : 0;
+  return safe.toLocaleString('zh-CN');
+}
+
+function updateHomeStatuses() {
+  setPill(el.homeMicStatus, statusLabel(state.micStatus), statusBadgeClass(state.micStatus));
+  const ready = state.models.sense && state.models.streaming;
+  setPill(el.homeModelStatus, ready ? '已就绪' : '缺少模型', ready ? 'success' : 'warn');
+  setPill(el.homeLlmStatus, state.enableLlm ? '开启' : '关闭', state.enableLlm ? 'success' : 'muted');
+  if (el.statAutoPaste) {
+    el.statAutoPaste.textContent = state.autoPaste ? '开启' : '关闭';
+  }
+}
+
+function updateStatsDisplay(lastLength = null) {
+  if (el.statChars) el.statChars.textContent = formatNumber(state.stats.totalChars);
+  if (el.statSessions) el.statSessions.textContent = formatNumber(state.stats.sessions);
+  if (el.statPersona) el.statPersona.textContent = state.stats.lastPersona || getActivePersona()?.name || '人设';
+  if (el.homeLatestPersona) el.homeLatestPersona.textContent = state.stats.lastPersona || getActivePersona()?.name || '人设';
+  if (el.homePersonaPill) el.homePersonaPill.textContent = state.stats.lastPersona || getActivePersona()?.name || '人设';
+  if (el.statAutoPaste) el.statAutoPaste.textContent = state.autoPaste ? '开启' : '关闭';
+
+  const latestLen = lastLength != null ? lastLength : (state.stats.lastText || '').length;
+  if (el.homeLatestLength) el.homeLatestLength.textContent = `${latestLen} 字`;
+  if (el.lastTranscriptionText) {
+    el.lastTranscriptionText.textContent = state.stats.lastText || '等待开始';
+  }
+}
+
+function recordTranscription(text) {
+  const content = text || '';
+  const personaName = getActivePersona()?.name || '人设';
+  state.stats.lastPersona = personaName;
+  state.stats.lastText = content || '等待开始';
+  const trimmed = content.trim();
+  if (trimmed) {
+    state.stats.totalChars += content.length;
+    state.stats.sessions += 1;
+  }
+  updateStatsDisplay(content.length);
 }
 
 function statusLabel(status) {

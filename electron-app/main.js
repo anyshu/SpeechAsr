@@ -15,6 +15,7 @@ const path = require('path');
 const { spawn, execFile } = require('child_process');
 const fs = require('fs');
 const https = require('https');
+const Store = require('electron-store');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const { SpeechASR, DEFAULT_OPTIONS } = require('@sherpa-onnx/speech-asr');
 
@@ -85,6 +86,63 @@ const currentConfig = MODE_CONFIG[APP_MODE] || MODE_CONFIG.full;
 // 实时转写模块
 const LiveTranscribeModule = require('./live-transcribe');
 
+// ============== Persona 配置 ==============
+const DEFAULT_PERSONAS = [
+  { id: 'default', name: '默认风格', icon: '🎙️', description: '保持客观简洁，直给结果。' },
+  { id: 'translator', name: '自动翻译', icon: '🌐', description: '中文转自然英文，英文润色但不改语义，专有名词保持原样。' },
+  { id: 'cmd-master', name: '命令行大神', icon: '💻', description: '将语音转为命令/代码，谨慎补全参数并简述作用。' },
+  { id: 'office', name: '职场大佬', icon: '🧳', description: '正式、稳重、条理清晰，适合职场沟通。' },
+  { id: 'wild', name: '发疯文学', icon: '🔥', description: '夸张有趣，节奏快，保持核心信息但更抓眼。' }
+];
+
+const settingsStore = new Store({
+  name: 'xigua-config',
+  defaults: {
+    personas: DEFAULT_PERSONAS,
+    activePersonaId: DEFAULT_PERSONAS[0].id
+  }
+});
+
+function loadPersonaState() {
+  const personas = settingsStore.get('personas', DEFAULT_PERSONAS);
+  const activeId = settingsStore.get('activePersonaId', personas[0]?.id || DEFAULT_PERSONAS[0].id);
+  return { personas, activeId };
+}
+
+function savePersonaState(nextState) {
+  const personas = Array.isArray(nextState?.personas) && nextState.personas.length ? nextState.personas : DEFAULT_PERSONAS;
+  const activeId =
+    nextState?.activeId && personas.some((p) => p.id === nextState.activeId)
+      ? nextState.activeId
+      : personas[0]?.id || DEFAULT_PERSONAS[0].id;
+  settingsStore.set('personas', personas);
+  settingsStore.set('activePersonaId', activeId);
+  broadcastPersonaUpdate();
+  refreshTrayMenu();
+  return { personas, activeId };
+}
+
+function setActivePersona(id) {
+  const state = loadPersonaState();
+  const activeId = state.personas.some((p) => p.id === id) ? id : state.activeId;
+  settingsStore.set('activePersonaId', activeId);
+  broadcastPersonaUpdate();
+  refreshTrayMenu();
+  return activeId;
+}
+
+function broadcastPersonaUpdate() {
+  const payload = loadPersonaState();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('persona-updated', payload);
+  }
+}
+
+function getActivePersonaName() {
+  const { personas, activeId } = loadPersonaState();
+  return personas.find((p) => p.id === activeId)?.name || '未选择';
+}
+
 const OFFLINE_MODEL_URL = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2';
 // const OFFLINE_MODEL_URL = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-funasr-nano-2025-12-17.tar.bz2';
 // const OFFLINE_MODEL_URL = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-funasr-nano-int8-2025-12-17.tar.bz2'
@@ -133,18 +191,22 @@ function getResourceBase() {
   return app.isPackaged ? process.resourcesPath : path.join(__dirname, '..');
 }
 
-function ensureTray() {
-  if (tray) return tray;
-  const baseImage = getIconImage();
-  const trayImage =
-    baseImage && !baseImage.isEmpty()
-      ? baseImage.resize({ width: 22, height: 22, quality: 'best' })
-      : nativeImage.createEmpty();
-  tray = new Tray(trayImage);
-  tray.setToolTip(APP_NAME);
-  const contextMenu = Menu.buildFromTemplate([
+function buildTrayMenuTemplate() {
+  const { personas, activeId } = loadPersonaState();
+  const personaItems = personas.map((p) => ({
+    label: `${p.icon ? `${p.icon} ` : ''}${p.name || '人设'}`,
+    type: 'checkbox',
+    checked: p.id === activeId,
+    click: () => setActivePersona(p.id)
+  }));
+
+  return [
+    { label: `当前人设：${getActivePersonaName()}`, enabled: false },
+    { type: 'separator' },
+    ...personaItems,
+    { type: 'separator' },
     {
-      label: '显示窗口',
+      label: `打开${APP_NAME}`,
       click: () => {
         if (!mainWindow || mainWindow.isDestroyed()) {
           createWindow();
@@ -154,16 +216,33 @@ function ensureTray() {
         }
       }
     },
-    { type: 'separator' },
     {
-      label: '退出',
+      label: `退出${APP_NAME}`,
       click: () => {
         forceQuit = true;
         app.quit();
       }
     }
-  ]);
+  ];
+}
+
+function refreshTrayMenu() {
+  if (!tray) return;
+  const template = buildTrayMenuTemplate();
+  const contextMenu = Menu.buildFromTemplate(template);
   tray.setContextMenu(contextMenu);
+}
+
+function ensureTray() {
+  if (tray) return tray;
+  const baseImage = getIconImage();
+  const trayImage =
+    baseImage && !baseImage.isEmpty()
+      ? baseImage.resize({ width: 22, height: 22, quality: 'best' })
+      : nativeImage.createEmpty();
+  tray = new Tray(trayImage);
+  tray.setToolTip(APP_NAME);
+  refreshTrayMenu();
   tray.on('click', () => {
     if (!mainWindow || mainWindow.isDestroyed()) {
       createWindow();
@@ -1351,6 +1430,22 @@ ipcMain.handle('system-input:select-and-replace', async (_event, payload) => {
       replaced: false
     };
   }
+});
+
+// Personas：获取/保存/切换
+ipcMain.handle('persona:list', async () => {
+  return loadPersonaState();
+});
+
+ipcMain.handle('persona:set', async (_event, payload) => {
+  const personas = Array.isArray(payload?.personas) ? payload.personas : [];
+  const activeId = payload?.activeId;
+  return savePersonaState({ personas, activeId });
+});
+
+ipcMain.handle('persona:set-active', async (_event, id) => {
+  const activeId = setActivePersona(id);
+  return { activeId, success: true };
 });
 
 ipcMain.handle('mic-permission-status', async () => {

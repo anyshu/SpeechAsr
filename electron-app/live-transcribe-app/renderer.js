@@ -11,6 +11,7 @@ const state = {
   autoPaste: true,
   manualRealtime: false,
   enableLlm: false,
+  autoLoadTriggered: false,
   isRecording: false,
   capturePromise: null,
   releasePromise: null,
@@ -28,7 +29,7 @@ function init() {
   hydrateDefaults();
   refreshMicStatus();
   refreshDevices();
-  refreshModelStatus();
+  refreshModelStatus().then(autoLoadModelsOnBoot);
   attachLiveListeners();
   reportApiAvailability();
   appendLog('小窗就绪：默认手动模式、自动粘贴开启');
@@ -203,6 +204,18 @@ async function refreshModelStatus() {
   } catch (err) {
     appendLog(`模型检测失败: ${err.message || err}`, 'error');
   }
+}
+
+async function autoLoadModelsOnBoot() {
+  if (state.autoLoadTriggered) return;
+  state.autoLoadTriggered = true;
+  const ready = state.models.sense && state.models.streaming;
+  if (!ready) {
+    appendLog('自动加载跳过：必需模型未就绪', 'warn');
+    return;
+  }
+  appendLog('检测到模型就绪，自动加载中...');
+  await loadLiveModels();
 }
 
 function setModelRow(key, ok) {

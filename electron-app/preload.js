@@ -89,5 +89,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // LLM API
   llmProcess: (text, prefix) => ipcRenderer.invoke('llm-process', text, prefix),
-  getCurrentSelection: () => ipcRenderer.invoke('get-current-selection')
+  getCurrentSelection: () => ipcRenderer.invoke('get-current-selection'),
+
+  // Personas
+  getPersonas: () => ipcRenderer.invoke('persona:list'),
+  savePersonas: (payload) => ipcRenderer.invoke('persona:set', payload),
+  setActivePersona: (id) => ipcRenderer.invoke('persona:set-active', id),
+  onPersonaUpdated: (callback) => {
+    const handler = (_event, payload) => callback(payload || {});
+    ipcRenderer.on('persona-updated', handler);
+    return () => ipcRenderer.removeListener('persona-updated', handler);
+  }
 }); 

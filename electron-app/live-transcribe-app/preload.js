@@ -95,7 +95,17 @@ const liveAppApi = {
   // 其他状态
   getModeDefaults: () => ipcRenderer.invoke('get-mode-defaults'),
   getAppMode: () => ipcRenderer.invoke('get-app-mode'),
-  getCurrentSelection: () => ipcRenderer.invoke('get-current-selection')
+  getCurrentSelection: () => ipcRenderer.invoke('get-current-selection'),
+
+  // Personas
+  getPersonas: () => ipcRenderer.invoke('persona:list'),
+  savePersonas: (payload) => ipcRenderer.invoke('persona:set', payload),
+  setActivePersona: (id) => ipcRenderer.invoke('persona:set-active', id),
+  onPersonaUpdated: (callback) => {
+    const handler = (_event, payload) => callback(payload || {});
+    ipcRenderer.on('persona-updated', handler);
+    return () => ipcRenderer.removeListener('persona-updated', handler);
+  }
 };
 
 contextBridge.exposeInMainWorld('liveApp', liveAppApi);
