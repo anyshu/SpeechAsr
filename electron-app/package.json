@@ -32,6 +32,7 @@
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@sherpa-onnx/speech-asr": "file:../speech-asr-sdk",
+    "better-sqlite3": "^9.4.0",
     "electron-store": "^8.1.0",
     "selection-hook": "^1.0.12"
   },

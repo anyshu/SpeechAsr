@@ -18,6 +18,7 @@ const https = require('https');
 const Store = require('electron-store');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const { SpeechASR, DEFAULT_OPTIONS } = require('@sherpa-onnx/speech-asr');
+const { createPersistence } = require('./persistence/sqlite');
 
 // ============== App 模式检测 ==============
 // 支持两种模式：full (完整版) 和 lite (简化版)
@@ -104,12 +105,21 @@ const settingsStore = new Store({
 });
 
 function loadPersonaState() {
+  if (persistence?.loadPersonas) {
+    return persistence.loadPersonas();
+  }
   const personas = settingsStore.get('personas', DEFAULT_PERSONAS);
   const activeId = settingsStore.get('activePersonaId', personas[0]?.id || DEFAULT_PERSONAS[0].id);
   return { personas, activeId };
 }
 
 function savePersonaState(nextState) {
+  if (persistence?.savePersonas) {
+    const result = persistence.savePersonas(nextState);
+    broadcastPersonaUpdate();
+    refreshTrayMenu();
+    return result;
+  }
   const personas = Array.isArray(nextState?.personas) && nextState.personas.length ? nextState.personas : DEFAULT_PERSONAS;
   const activeId =
     nextState?.activeId && personas.some((p) => p.id === nextState.activeId)
@@ -123,6 +133,14 @@ function savePersonaState(nextState) {
 }
 
 function setActivePersona(id) {
+  if (persistence?.savePersonas) {
+    const state = loadPersonaState();
+    const activeId = state.personas.some((p) => p.id === id) ? id : state.activeId;
+    persistence.savePersonas({ personas: state.personas, activeId });
+    broadcastPersonaUpdate();
+    refreshTrayMenu();
+    return activeId;
+  }
   const state = loadPersonaState();
   const activeId = state.personas.some((p) => p.id === id) ? id : state.activeId;
   settingsStore.set('activePersonaId', activeId);
@@ -141,6 +159,60 @@ function broadcastPersonaUpdate() {
 function getActivePersonaName() {
   const { personas, activeId } = loadPersonaState();
   return personas.find((p) => p.id === activeId)?.name || '未选择';
+}
+
+function getUsageStats() {
+  if (persistence?.getUsageStats) {
+    return persistence.getUsageStats();
+  }
+  return {
+    totalChars: settingsStore.get('usage.totalChars', 0),
+    sessions: settingsStore.get('usage.sessions', 0),
+    lastText: settingsStore.get('usage.lastText', ''),
+    lastPersona: settingsStore.get('usage.lastPersona', ''),
+    lastTime: settingsStore.get('usage.lastTime', null)
+  };
+}
+
+function setUsageStats(stats) {
+  if (persistence?.setUsageStats) {
+    return persistence.setUsageStats(stats);
+  }
+  const safe = stats || {};
+  settingsStore.set('usage', {
+    totalChars: Number(safe.totalChars) || 0,
+    sessions: Number(safe.sessions) || 0,
+    lastText: safe.lastText || '',
+    lastPersona: safe.lastPersona || '',
+    lastTime: safe.lastTime || null
+  });
+  return getUsageStats();
+}
+
+function listHistory(limit = 50) {
+  if (persistence?.listHistory) {
+    return persistence.listHistory(limit);
+  }
+  const arr = settingsStore.get('history', []);
+  return Array.isArray(arr) ? arr.slice(0, limit) : [];
+}
+
+function addHistory(entry) {
+  if (persistence?.addHistory) {
+    persistence.addHistory(entry, 500);
+    return;
+  }
+  const arr = settingsStore.get('history', []);
+  const list = Array.isArray(arr) ? arr : [];
+  list.unshift({
+    id: `${Date.now()}`,
+    time: entry?.time || Date.now(),
+    persona: entry?.persona || '人设',
+    length: Number(entry?.length) || 0,
+    status: entry?.status || 'ok',
+    text: entry?.text || ''
+  });
+  settingsStore.set('history', list.slice(0, 500));
 }
 
 const OFFLINE_MODEL_URL = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2';
@@ -182,6 +254,7 @@ function getIconImage() {
 let mainWindow;
 let cachedPythonPath = null;
 let tray = null;
+let persistence = null;
 let forceQuit = false;
 const PYTHON_NOT_FOUND_MESSAGE =
   '未找到可用的 Python3，请安装 Python3 或将 SPEECH_ASR_PYTHON 指向可执行文件';
@@ -1133,6 +1206,15 @@ app.whenReady().then(() => {
   } catch (err) {
     console.warn('Failed to set app name', err);
   }
+  try {
+    persistence = createPersistence({
+      app,
+      defaults: { personas: DEFAULT_PERSONAS, activePersonaId: DEFAULT_PERSONAS[0].id }
+    });
+    console.log('[main] persistence mode:', persistence?.mode);
+  } catch (err) {
+    console.warn('[main] 初始化持久化失败，将继续使用 electron-store', err);
+  }
   if (process.platform === 'darwin' && app.dock && ICON_PATH) {
     try {
       const dockImage = getIconImage();
@@ -1446,6 +1528,24 @@ ipcMain.handle('persona:set', async (_event, payload) => {
 ipcMain.handle('persona:set-active', async (_event, id) => {
   const activeId = setActivePersona(id);
   return { activeId, success: true };
+});
+
+// 历史/使用统计
+ipcMain.handle('history:list', async (_event, limit = 100) => {
+  return { history: listHistory(Math.max(1, limit)) };
+});
+
+ipcMain.handle('history:add', async (_event, entry) => {
+  addHistory(entry || {});
+  return { success: true };
+});
+
+ipcMain.handle('usage:get', async () => {
+  return getUsageStats();
+});
+
+ipcMain.handle('usage:set', async (_event, stats) => {
+  return setUsageStats(stats || {});
 });
 
 ipcMain.handle('mic-permission-status', async () => {

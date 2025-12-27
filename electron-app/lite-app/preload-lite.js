@@ -74,6 +74,10 @@ try {
     getModeDefaults: () => ipcRenderer.invoke('get-mode-defaults'),
     getAppMode: () => ipcRenderer.invoke('get-app-mode'),
     getCurrentSelection: () => ipcRenderer.invoke('get-current-selection'),
+    getHistory: (limit) => ipcRenderer.invoke('history:list', limit),
+    addHistory: (entry) => ipcRenderer.invoke('history:add', entry),
+    getUsageStats: () => ipcRenderer.invoke('usage:get'),
+    setUsageStats: (stats) => ipcRenderer.invoke('usage:set', stats),
 
     // Personas
     getPersonas: () => ipcRenderer.invoke('persona:list'),

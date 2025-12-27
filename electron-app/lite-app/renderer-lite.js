@@ -34,10 +34,6 @@ const personaState = {
   activeKey: 'xigua-lite-active-persona'
 };
 
-const historyState = {
-  storageKey: 'xigua-lite-history'
-};
-
 const defaultPersonas = [
   {
     id: 'default',
@@ -79,7 +75,8 @@ async function init() {
   wireNavigation();
   setActivePage('homePage');
   await initPersonas();
-  hydrateHistory();
+  await hydrateUsageStats();
+  await hydrateHistory();
   bindEvents();
   wireProgressListeners();
   hydrateDefaults();
@@ -428,6 +425,25 @@ function wireProgressListeners() {
   }
   if (window.liveApp?.onVadProgress) {
     cleanupFns.push(window.liveApp.onVadProgress((payload) => updateProgressText('VAD', payload)));
+  }
+}
+
+async function hydrateUsageStats() {
+  try {
+    const stats = await window.liveApp?.getUsageStats?.();
+    if (stats) {
+      state.stats = { ...state.stats, ...stats };
+    }
+  } catch (err) {
+    appendLog(`读取使用数据失败: ${err.message || err}`, 'error');
+  }
+}
+
+function persistUsageStats() {
+  try {
+    window.liveApp?.setUsageStats?.(state.stats);
+  } catch (err) {
+    appendLog(`保存使用数据失败: ${err.message || err}`, 'error');
   }
 }
 
@@ -1025,6 +1041,7 @@ function recordTranscription(text) {
     status: hasContent ? 'ok' : 'error'
   });
   updateStatsDisplay(content.length);
+  persistUsageStats();
 }
 
 function statusLabel(status) {
@@ -1042,12 +1059,17 @@ function statusBadgeClass(status) {
 }
 
 function addHistoryEntry(entry) {
-  state.history.unshift({
-    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  const normalized = {
+    id: entry?.id || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
     ...entry
-  });
-  state.history = state.history.slice(0, 50);
-  persistHistory();
+  };
+  state.history.unshift(normalized);
+  state.history = state.history.slice(0, 100);
+  try {
+    window.liveApp?.addHistory?.(normalized);
+  } catch (err) {
+    appendLog(`写入历史失败: ${err.message || err}`, 'error');
+  }
 }
 
 function renderHistoryList() {
@@ -1085,24 +1107,14 @@ function renderHistoryList() {
   });
 }
 
-function hydrateHistory() {
+async function hydrateHistory() {
   try {
-    const raw = window.localStorage?.getItem?.(historyState.storageKey);
-    if (!raw) return;
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      state.history = parsed.slice(0, 50);
-    }
+    const res = await window.liveApp?.getHistory?.(100);
+    const history = Array.isArray(res?.history) ? res.history : Array.isArray(res) ? res : [];
+    state.history = history.slice(0, 100);
+    renderHistoryList();
   } catch (err) {
-    // ignore parse errors
-  }
-}
-
-function persistHistory() {
-  try {
-    window.localStorage?.setItem?.(historyState.storageKey, JSON.stringify(state.history));
-  } catch (err) {
-    // ignore write errors
+    appendLog(`读取历史失败: ${err.message || err}`, 'error');
   }
 }
 
