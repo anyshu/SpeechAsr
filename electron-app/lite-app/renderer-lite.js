@@ -43,7 +43,7 @@ const defaultPersonas = [
     id: 'translator',
     name: '自动翻译',
     icon: '🌐',
-    description: '中文转自然英文，英文润色但不改语义，专有名词保持原样。'
+    description: '如果文本为中文，请翻译成自然流畅的英文；如已是英文则仅做清理，不改变语言。专有名词保持原样。'
   },
   {
     id: 'cmd-master',
@@ -96,15 +96,16 @@ if (document.readyState === 'loading') {
 function cacheElements() {
   el.appModePill = document.getElementById('appModePill');
   el.activePersonaName = document.getElementById('activePersonaName');
-  el.activePersonaDesc = document.getElementById('activePersonaDesc');
   el.personaList = document.getElementById('personaList');
   el.personaNameInput = document.getElementById('personaNameInput');
   el.personaDescription = document.getElementById('personaDescription');
   el.personaIconGrid = document.getElementById('personaIconGrid');
-  el.addPersonaBtn = document.getElementById('addPersonaBtn');
   el.newPersonaInline = document.getElementById('newPersonaInline');
-  el.duplicatePersonaBtn = document.getElementById('duplicatePersonaBtn');
   el.savePersonaBtn = document.getElementById('savePersonaBtn');
+  el.deletePersonaBtn = document.getElementById('deletePersonaBtn');
+  el.personaHeroName = document.getElementById('personaHeroName');
+  el.personaHeroDesc = document.getElementById('personaHeroDesc');
+  el.personaHeroType = document.getElementById('personaHeroType');
   el.navItems = document.querySelectorAll('.nav-item');
   el.pages = document.querySelectorAll('.page');
   el.statChars = document.getElementById('statChars');
@@ -185,12 +186,14 @@ function bindEvents() {
     updateHomeStatuses();
   });
 
-  el.addPersonaBtn?.addEventListener('click', () => createPersona());
   el.newPersonaInline?.addEventListener('click', () => createPersona());
-  el.duplicatePersonaBtn?.addEventListener('click', duplicatePersona);
   el.savePersonaBtn?.addEventListener('click', savePersonaForm);
   el.personaNameInput?.addEventListener('input', handlePersonaDraftChange);
   el.personaDescription?.addEventListener('input', handlePersonaDraftChange);
+  el.deletePersonaBtn?.addEventListener('click', () => {
+    const persona = getActivePersona();
+    if (persona) deletePersona(persona.id);
+  });
 }
 
 async function initPersonas() {
@@ -219,19 +222,36 @@ function getActivePersona() {
   return personaState.personas.find((p) => p.id === personaState.activeId) || personaState.personas[0] || null;
 }
 
+function isBuiltinPersona(id) {
+  return defaultPersonas.some((p) => p.id === id);
+}
+
+function personaPreview(text, max = 72) {
+  const cleaned = (text || '').replace(/\s+/g, ' ').trim();
+  if (!cleaned) return '点击编辑人设，写下希望 AI 遵守的语气、格式或约束';
+  return cleaned.length > max ? `${cleaned.slice(0, max)}...` : cleaned;
+}
+
 function renderPersonaList() {
   if (!el.personaList) return;
   el.personaList.innerHTML = '';
   personaState.personas.forEach((persona) => {
     const item = document.createElement('button');
-    item.className = `persona-item${persona.id === personaState.activeId ? ' active' : ''}`;
+    const isActive = persona.id === personaState.activeId;
+    item.className = `persona-item${isActive ? ' active' : ''}`;
+    const typeLabel = isBuiltinPersona(persona.id) ? '内置' : '自定义';
+    const descPreview = personaPreview(persona.description, 68);
     item.innerHTML = `
       <div class="persona-main">
-        <div class="persona-icon">${persona.icon || '🧩'}</div>
-        <div>
-          <div class="persona-name">${escapeHtml(persona.name || '未命名人设')}</div>
-          <div class="persona-desc">${escapeHtml(persona.description || '')}</div>
+        <div class="persona-icon">${escapeHtml(persona.icon || '🧩')}</div>
+        <div class="persona-info">
+          <div class="persona-line">
+            <div class="persona-name">${escapeHtml(persona.name || '未命名人设')}</div>
+            <span class="persona-tag ${isBuiltinPersona(persona.id) ? 'muted' : 'accent'}">${escapeHtml(typeLabel)}</span>
+          </div>
+          <div class="persona-desc">${escapeHtml(descPreview)}</div>
         </div>
+        <div class="persona-active-dot">${isActive ? '✓' : '>'}</div>
       </div>
     `;
     item.addEventListener('click', () => setActivePersona(persona.id));
@@ -246,6 +266,16 @@ function renderPersonaDetail() {
   if (el.personaDescription) el.personaDescription.value = persona.description || '';
   renderIconGrid(persona.icon || '');
   updateHeroPersona(persona);
+  updatePersonaActions(persona);
+}
+
+function updatePersonaActions(persona) {
+  const canDelete = Boolean(persona) && !isBuiltinPersona(persona?.id);
+  if (el.deletePersonaBtn) {
+    el.deletePersonaBtn.disabled = !canDelete;
+    el.deletePersonaBtn.title = canDelete ? '删除当前人设' : '内置人设不可删除';
+    el.deletePersonaBtn.classList.toggle('disabled', !canDelete);
+  }
 }
 
 function renderIconGrid(selected) {
@@ -289,6 +319,7 @@ function handlePersonaDraftChange() {
   if (!persona) return;
   persona.name = el.personaNameInput?.value || persona.name;
   persona.description = el.personaDescription?.value || persona.description;
+  renderPersonaList();
   updateHeroPersona(persona);
 }
 
@@ -331,16 +362,41 @@ function duplicatePersona() {
   setActivePersona(clone.id);
 }
 
-function updateHeroPersona(persona) {
-  if (el.activePersonaName) el.activePersonaName.textContent = persona?.name || '人设';
-  if (el.activePersonaDesc) {
-    el.activePersonaDesc.textContent =
-      persona?.description || '写下希望 AI 遵守的语气、格式或约束。';
+function deletePersona(personaId) {
+  if (isBuiltinPersona(personaId)) {
+    appendLog('不能删除内置人设');
+    return;
   }
-  if (el.statPersona) el.statPersona.textContent = persona?.name || '人设';
-  if (el.homePersonaPill) el.homePersonaPill.textContent = persona?.name || '人设';
-  if (el.homeLatestPersona) el.homeLatestPersona.textContent = persona?.name || '人设';
-  state.stats.lastPersona = persona?.name || state.stats.lastPersona;
+  const idx = personaState.personas.findIndex(p => p.id === personaId);
+  if (idx === -1) return;
+  const deleted = personaState.personas.splice(idx, 1)[0];
+  persistPersonas();
+  appendLog(`已删除人设：${deleted.name}`);
+  // 如果删除的是当前激活的人设，切换到第一个
+  if (personaState.activeId === personaId) {
+    const nextId = personaState.personas[0]?.id || defaultPersonas[0].id;
+    setActivePersona(nextId);
+  } else {
+    renderPersonaList();
+  }
+}
+
+function updateHeroPersona(persona) {
+  const name = persona?.name || '人设';
+  const desc = personaPreview(persona?.description, 180) || '写下希望 AI 遵守的语气、格式或约束。';
+  const builtin = isBuiltinPersona(persona?.id);
+
+  if (el.activePersonaName) el.activePersonaName.textContent = name;
+  if (el.statPersona) el.statPersona.textContent = name;
+  if (el.homePersonaPill) el.homePersonaPill.textContent = name;
+  if (el.homeLatestPersona) el.homeLatestPersona.textContent = name;
+  if (el.personaHeroName) el.personaHeroName.textContent = name;
+  if (el.personaHeroDesc) el.personaHeroDesc.textContent = desc;
+  if (el.personaHeroType) {
+    el.personaHeroType.textContent = builtin ? '内置' : '自定义';
+    el.personaHeroType.classList.toggle('custom', !builtin);
+  }
+  state.stats.lastPersona = name || state.stats.lastPersona;
 }
 
 function wireProgressListeners() {

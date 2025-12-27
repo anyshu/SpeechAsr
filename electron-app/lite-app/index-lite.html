@@ -40,11 +40,6 @@
           <div class="hero-meta">
             <div class="eyebrow">当前人设</div>
             <div class="hero-title" id="activePersonaName">自动翻译</div>
-            <p class="hero-desc" id="activePersonaDesc">如果文本为中文，请翻译成自然流畅的英文；如已是英文则润色但不改语义，专有名词保留原样。</p>
-            <div class="hero-actions">
-              <button class="primary" id="addPersonaBtn">新增人设</button>
-              <button class="ghost" id="duplicatePersonaBtn">复制并修改</button>
-            </div>
           </div>
           <div class="hero-stats">
             <div class="stat-card">
@@ -141,26 +136,45 @@
       </section>
 
       <section class="page" data-page="personaPage">
-        <section class="panel-grid" id="personaSection">
-          <div class="panel">
-            <div class="panel-header">
+        <section class="persona-hero">
+          <div class="persona-hero-info">
+            <div class="eyebrow light">当前人设</div>
+            <div class="persona-hero-title">
+              <span id="personaHeroName">自动翻译</span>
+              <span class="hero-pill" id="personaHeroType">内置</span>
+            </div>
+            <p class="persona-hero-desc" id="personaHeroDesc">结合图标和描述，快速切换你最常用的语气与格式。</p>
+          </div>
+          <div class="persona-hero-actions">
+            <button class="pill-action" id="newPersonaInline">新增人设</button>
+          </div>
+        </section>
+
+        <section class="persona-layout" id="personaSection">
+          <div class="panel persona-panel">
+            <div class="persona-panel-head">
               <div>
                 <div class="panel-title">我的人设</div>
-                <div class="panel-desc">选择人设，控制输出语气与风格</div>
+                <div class="panel-desc">左侧选择，右侧编辑详情</div>
               </div>
-              <button class="secondary" id="newPersonaInline">新建</button>
             </div>
             <div class="persona-list" id="personaList"></div>
           </div>
-          <div class="panel">
-            <div class="panel-header">
-              <div class="panel-title">人设详情</div>
-              <div class="panel-desc">名称、图标与风格描述</div>
+          <div class="panel persona-panel">
+            <div class="persona-panel-head">
+              <div>
+                <div class="panel-title">人设详情</div>
+                <div class="panel-desc">名称、图标与风格描述</div>
+              </div>
+              <div class="persona-actions">
+                <button class="ghost danger" id="deletePersonaBtn">删除</button>
+                <button class="primary strong" id="savePersonaBtn">保存</button>
+              </div>
             </div>
-            <div class="form">
+            <div class="form persona-form">
               <label class="field">
                 <span>名称</span>
-                <input id="personaNameInput" type="text" placeholder="自动翻译">
+                <input id="personaNameInput" type="text" placeholder="命令行大神-自定义">
               </label>
               <div class="field">
                 <div class="field-head">
@@ -170,11 +184,8 @@
               </div>
               <label class="field">
                 <span>风格描述</span>
-                <textarea id="personaDescription" rows="5" placeholder="写下希望 AI 遵守的语气、格式或约束"></textarea>
+                <textarea id="personaDescription" rows="6" placeholder="写下希望 AI 遵守的语气、格式或约束"></textarea>
               </label>
-              <div class="btn-row end">
-                <button class="secondary" id="savePersonaBtn">保存</button>
-              </div>
             </div>
           </div>
         </section>
