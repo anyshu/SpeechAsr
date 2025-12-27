@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>西瓜说 · Lite</title>
+  <link rel="stylesheet" href="./styles-lite.css">
+</head>
+<body>
+  <div class="lite-shell">
+    <aside class="sidebar">
+      <div class="brand-row">
+        <div class="logo">🍉</div>
+        <div class="brand-meta">
+          <div class="brand-name">西瓜说</div>
+          <div class="brand-sub">Lite</div>
+        </div>
+      </div>
+      <nav class="nav">
+        <button class="nav-item active" data-target="dashboard">首页</button>
+        <button class="nav-item" data-target="personaSection">人设</button>
+        <button class="nav-item" data-target="logSection">日志</button>
+      </nav>
+      <div class="sidebar-card">
+        <div class="sidebar-title">快捷提示</div>
+        <p class="tip">按住 Option / Alt 开始录音，松开结束。</p>
+        <p class="tip">当前人设实时生效，可用 LLM 精修输出。</p>
+        <div class="soft-card">
+          <div class="soft-title">模式</div>
+          <div class="soft-pill" id="appModePill">Lite</div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="content">
+      <section class="hero" id="dashboard">
+        <div class="hero-meta">
+          <div class="eyebrow">当前人设</div>
+          <div class="hero-title" id="activePersonaName">自动翻译</div>
+          <p class="hero-desc" id="activePersonaDesc">如果文本为中文，请翻译成自然流畅的英文；如已是英文则润色但不改语义，专有名词保留原样。</p>
+          <div class="hero-actions">
+            <button class="primary" id="addPersonaBtn">新增人设</button>
+            <button class="ghost" id="duplicatePersonaBtn">复制并修改</button>
+          </div>
+        </div>
+        <div class="hero-stats">
+          <div class="stat-card">
+            <div class="stat-label">模型状态</div>
+            <div class="stat-value" id="modelSummary">未检测</div>
+            <div class="stat-desc" id="modelProgressText">SenseVoice · ZipFormer · 标点 · VAD</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">录音提示</div>
+            <div class="stat-value">Option</div>
+            <div class="stat-desc">按住录音，松开识别</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel-grid" id="personaSection">
+        <div class="panel">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">我的人设</div>
+              <div class="panel-desc">选择人设，控制输出语气与风格</div>
+            </div>
+            <button class="secondary" id="newPersonaInline">新建</button>
+          </div>
+          <div class="persona-list" id="personaList"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title">人设详情</div>
+            <div class="panel-desc">名称、图标与风格描述</div>
+          </div>
+          <div class="form">
+            <label class="field">
+              <span>名称</span>
+              <input id="personaNameInput" type="text" placeholder="自动翻译">
+            </label>
+            <div class="field">
+              <div class="field-head">
+                <span>图标</span>
+              </div>
+              <div class="icon-grid" id="personaIconGrid"></div>
+            </div>
+            <label class="field">
+              <span>风格描述</span>
+              <textarea id="personaDescription" rows="5" placeholder="写下希望 AI 遵守的语气、格式或约束"></textarea>
+            </label>
+            <div class="btn-row end">
+              <button class="secondary" id="savePersonaBtn">保存</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel-grid wide">
+        <div class="panel">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">模型与权限</div>
+              <div class="panel-desc">SenseVoice 依赖 + 麦克风授权</div>
+            </div>
+            <div class="badge muted" id="micStatusBadge">未知</div>
+          </div>
+          <div class="row space">
+            <div class="chip-row">
+              <button id="checkMicBtn" class="ghost">重新检测</button>
+              <button id="requestMicBtn" class="primary">请求权限</button>
+            </div>
+            <div class="chip-row">
+              <span class="pill hollow">进度</span>
+              <span class="pill" id="modelSummarySecondary">未检测</span>
+            </div>
+          </div>
+          <div class="model-grid">
+            <div class="model-row">
+              <div class="model-info">
+                <span class="dot" id="senseStatusDot"></span>
+                <div>
+                  <div class="model-name">SenseVoice 2pass</div>
+                  <div class="model-desc">二次精修，提升准确率</div>
+                </div>
+              </div>
+              <div class="model-actions">
+                <span class="status-text" id="senseStatusText">未检测</span>
+                <button class="ghost" data-download="sense">下载</button>
+              </div>
+            </div>
+            <div class="model-row">
+              <div class="model-info">
+                <span class="dot" id="streamStatusDot"></span>
+                <div>
+                  <div class="model-name">ZipFormer Streaming</div>
+                  <div class="model-desc">实时一遍，保持流畅</div>
+                </div>
+              </div>
+              <div class="model-actions">
+                <span class="status-text" id="streamStatusText">未检测</span>
+                <button class="ghost" data-download="stream">下载</button>
+              </div>
+            </div>
+            <div class="model-row">
+              <div class="model-info">
+                <span class="dot" id="punctStatusDot"></span>
+                <div>
+                  <div class="model-name">标点模型</div>
+                  <div class="model-desc">补全标点、格式</div>
+                </div>
+              </div>
+              <div class="model-actions">
+                <span class="status-text" id="punctStatusText">未检测</span>
+                <button class="ghost" data-download="punct">下载</button>
+              </div>
+            </div>
+            <div class="model-row">
+              <div class="model-info">
+                <span class="dot" id="vadStatusDot"></span>
+                <div>
+                  <div class="model-name">VAD (Silero)</div>
+                  <div class="model-desc">语音活动检测</div>
+                </div>
+              </div>
+              <div class="model-actions">
+                <span class="status-text" id="vadStatusText">未检测</span>
+                <button class="ghost" data-download="vad">下载</button>
+              </div>
+            </div>
+          </div>
+          <div class="row space">
+            <button class="secondary" id="downloadAllBtn">一键下载必需模型</button>
+            <div class="progress-text" id="modelProgressText"></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">实时转写控制</div>
+              <div class="panel-desc">选择麦克风、切换粘贴与 LLM</div>
+            </div>
+            <div class="badge muted" id="liveStatusBadge">未加载</div>
+          </div>
+          <div class="field">
+            <div class="field-head">
+              <span>麦克风</span>
+              <button class="chip ghost" id="refreshMicBtn">刷新</button>
+            </div>
+            <select id="micSelect"></select>
+          </div>
+          <div class="toggle-stack">
+            <label class="switch">
+              <input type="checkbox" id="autoPasteToggle" checked>
+              <span>自动粘贴</span>
+            </label>
+            <label class="switch">
+              <input type="checkbox" id="manualRealtimeToggle">
+              <span>实时分段 (Toggle)</span>
+            </label>
+            <label class="switch" title="使用当前人设对最终文本进行精修">
+              <input type="checkbox" id="llmToggle">
+              <span>LLM 处理</span>
+            </label>
+          </div>
+          <div class="btn-row">
+            <button class="primary" id="loadModelsBtn">加载模型</button>
+            <button class="ghost" id="releaseModelsBtn">释放</button>
+          </div>
+          <div class="hint">按住 Option / Alt 开始录音，松开结束。实时应用当前人设并粘贴结果。</div>
+        </div>
+      </section>
+
+      <section class="panel wide-single results">
+        <div class="panel-title">识别结果</div>
+        <div class="pass pass-first">
+          <div class="pass-label">第一遍 · ZipFormer</div>
+          <div class="pass-text" id="firstPassText">等待开始</div>
+        </div>
+        <div class="pass pass-second">
+          <div class="pass-label">第二遍 · SenseVoice</div>
+          <div class="pass-text" id="secondPassText">等待开始</div>
+        </div>
+      </section>
+
+      <section class="panel wide-single logs" id="logSection">
+        <div class="panel-header">
+          <div class="panel-title">日志</div>
+          <button class="ghost" id="clearLogBtn">清空</button>
+        </div>
+        <div class="log-list" id="logList"></div>
+      </section>
+    </main>
+  </div>
+  <script src="./renderer-lite.js"></script>
+</body>
+</html>

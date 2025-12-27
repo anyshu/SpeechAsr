@@ -35,10 +35,11 @@ const MODE_CONFIG = {
     htmlFile: 'lite-app/index-lite.html',
     preloadFile: 'lite-app/preload-lite.js',
     windowConfig: {
-      width: 500,
-      height: 400,
-      minWidth: 400,
-      minHeight: 300
+      width: 1200,
+      height: 780,
+      minWidth: 960,
+      minHeight: 620,
+      resizable: true
     },
     defaults: {
       autoPaste: true,
@@ -102,7 +103,9 @@ const LLM_CONFIG = {
   apiKey: 'sk-Frhn6R8bKvV54qDFOx4S7U2YT7tMTB4yFHHSkHIKuASSPrCk',
   apiUrl: 'https://next-api.fazhiplus.com/v1',
   model: 'deepseek-v3.1',
-  systemPrompt: '你是一个AI语音助手，帮助用户处理输入的内容。输出用户的需求结果，不要包含任何多余的说明文字。'
+  systemPrompt: '你是一个AI语音助手，帮助用户处理输入的内容。\
+  直接输出用户的需求结果，不要包含任何多余的说明文字。\
+  禁止输出任何解释、注释或Markdown格式'
 };
 function getIconPath() {
   // 在打包后优先使用 resources 目录下的同名文件
