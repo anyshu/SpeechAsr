@@ -798,7 +798,7 @@ async function handleGlobalPttStart(payload) {
   }
   state.autopasteBuffer = '';
   state.lastFirstPassLength = 0;
-  sendOverlayRecording('正在录音...', '松开 Option/Alt 结束');
+  sendOverlayRecording('正在录音...', '松开 Fn 键结束');
   await startLiveCapture();
 }
 
@@ -830,7 +830,7 @@ async function loadLiveModels() {
       return;
     }
     state.modelsLoaded = true;
-    appendLog('实时模型已加载，可按住 Option 键开始录音', 'success');
+    appendLog('实时模型已加载，可按住 Fn 键开始录音', 'success');
     setBadge(el.liveStatusBadge, '已加载（手动）', 'success');
   } catch (err) {
     appendLog(`加载失败: ${err.message || err}`, 'error');

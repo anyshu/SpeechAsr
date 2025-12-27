@@ -15,14 +15,35 @@ let recordingStartTs = 0;
 let recordingWatchdog = null;
 
 // 配置
-const TRIGGER_UNI_KEY = 'Alt'; // 左侧 Option
-const TRIGGER_MIN_HOLD_MS = 180; // 忽略过短的抬起抖动（ms）
+const DEFAULT_TRIGGER_CONFIG = {
+  uniKey: 'Alt', // 左侧 Option
+  vkCodes: process.platform === 'darwin' ? [58] : [], // macOS 左侧 Option 键 vkCode = 58
+  label: 'Option'
+};
 const MAX_RECORDING_MS = 8000; // 保护性超时，防止 key-up 丢失
 
 // 外部依赖（由主应用注入）
 let mainWindow = null;
 let speechAsr = null;
 let overlayManager = null;
+let triggerConfig = { ...DEFAULT_TRIGGER_CONFIG };
+
+function normalizeTriggerConfig(config = {}) {
+  const normalizedVkCodes =
+    Array.isArray(config.vkCodes) && config.vkCodes.length
+      ? config.vkCodes.filter((code) => typeof code === 'number')
+      : undefined;
+
+  const normalizedUniKey =
+    typeof config.uniKey === 'string' || config.uniKey === null ? config.uniKey : undefined;
+
+  return {
+    ...DEFAULT_TRIGGER_CONFIG,
+    ...config,
+    uniKey: normalizedUniKey !== undefined ? normalizedUniKey : DEFAULT_TRIGGER_CONFIG.uniKey,
+    vkCodes: normalizedVkCodes !== undefined ? normalizedVkCodes : DEFAULT_TRIGGER_CONFIG.vkCodes
+  };
+}
 
 /**
  * 初始化配置
@@ -31,6 +52,12 @@ function init(options) {
   mainWindow = options.mainWindow;
   speechAsr = options.speechAsr;
   overlayManager = options.overlayManager;
+
+  if (options?.triggerConfig || options?.pttConfig) {
+    triggerConfig = normalizeTriggerConfig(options.triggerConfig || options.pttConfig);
+  } else {
+    triggerConfig = { ...DEFAULT_TRIGGER_CONFIG };
+  }
 }
 
 function clearRecordingWatchdog() {
@@ -64,14 +91,19 @@ function safeStopRecording(payload = {}) {
  * 检查是否是触发键
  */
 function isTriggerKey(event) {
-  if (!event || event.uniKey !== TRIGGER_UNI_KEY) return false;
+  if (!event) return false;
 
-  // macOS 左侧 Option 键 vkCode = 58
-  if (process.platform === 'darwin' && typeof event.vkCode === 'number') {
-    return event.vkCode === 58;
-  }
+  const matchUniKey =
+    typeof triggerConfig.uniKey === 'string' && triggerConfig.uniKey
+      ? event.uniKey === triggerConfig.uniKey
+      : false;
 
-  return true;
+  const matchVkCode =
+    Array.isArray(triggerConfig.vkCodes) && triggerConfig.vkCodes.length && typeof event.vkCode === 'number'
+      ? triggerConfig.vkCodes.includes(event.vkCode)
+      : false;
+
+  return matchUniKey || matchVkCode;
 }
 
 /**
@@ -183,7 +215,8 @@ function setupGlobalPttHook(app) {
     safeStopRecording({ manualRealtime: false, source: 'key-up' });
   });
 
-  console.log('[Push-to-Talk] Listening for Left Option key globally');
+  const triggerLabel = triggerConfig.label || triggerConfig.uniKey || 'configured';
+  console.log(`[Push-to-Talk] Listening for ${triggerLabel} key globally`);
 
   return globalPttHook;
 }

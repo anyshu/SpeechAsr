@@ -28,7 +28,9 @@ let config = {
   // PTT 配置
   ptt: {
     uniKey: 'Alt',        // 触发键
-    minHoldMs: 180        // 最小按住时间
+    vkCodes: process.platform === 'darwin' ? [58] : [], // 默认监听左侧 Option
+    minHoldMs: 180,       // 最小按住时间
+    label: 'Option'
   }
 };
 
@@ -60,7 +62,8 @@ function init(options) {
   pttManager.init({
     mainWindow: options.mainWindow,
     speechAsr: options.speechAsr,
-    overlayManager
+    overlayManager,
+    triggerConfig: config.ptt
   });
 
   const speechAsrWrapper = require('./main/speech-asr-wrapper');

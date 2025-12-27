@@ -1240,6 +1240,15 @@ app.whenReady().then(() => {
   createWindow();
   ensureTray();
 
+  const livePttConfig =
+    APP_MODE === 'lite' && process.platform === 'darwin'
+      ? {
+          uniKey: 'Fn',
+          vkCodes: [63], // macOS Fn key (kVK_Function = 0x3F)
+          label: 'Fn'
+        }
+      : undefined;
+
   // 注册并启动实时转写模块
   LiveTranscribeModule.register({
     app,
@@ -1254,6 +1263,7 @@ app.whenReady().then(() => {
     getStreamingModelPaths,
     getPunctuationPaths,
     getVadPaths,
+    ...(livePttConfig ? { ptt: livePttConfig } : {}),
     onResult: (payload) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('live-transcribe-result', payload);
