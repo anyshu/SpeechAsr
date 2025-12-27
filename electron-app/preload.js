@@ -89,6 +89,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onVadModelDownloadProgress: (callback) => ipcRenderer.on('vad-download-progress', callback),
   getMicPermissionStatus: () => ipcRenderer.invoke('mic-permission-status'),
   requestMicPermission: () => ipcRenderer.invoke('mic-permission-request'),
+  openPrivacySettings: (kind) => ipcRenderer.invoke('open-privacy-settings', kind),
 
   // LLM API
   llmProcess: (text, prefix) => ipcRenderer.invoke('llm-process', text, prefix),
@@ -139,5 +140,6 @@ contextBridge.exposeInMainWorld('liveApp', {
   openModelFolder: () => ipcRenderer.invoke('model:open-folder'),
   getModeDefaults: () => ipcRenderer.invoke('get-mode-defaults'),
   getAppMode: () => ipcRenderer.invoke('get-app-mode'),
+  openPrivacySettings: (kind) => ipcRenderer.invoke('open-privacy-settings', kind),
   startupComplete: () => ipcRenderer.invoke('startup:complete')
 });

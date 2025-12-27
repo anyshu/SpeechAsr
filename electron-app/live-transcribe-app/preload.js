@@ -50,6 +50,7 @@ const liveAppApi = {
   // 权限
   getMicPermissionStatus: () => ipcRenderer.invoke('mic-permission-status'),
   requestMicPermission: () => ipcRenderer.invoke('mic-permission-request'),
+  openPrivacySettings: (kind) => ipcRenderer.invoke('open-privacy-settings', kind),
 
   // 模型检测
   checkModel: () => ipcRenderer.invoke('check-model'),

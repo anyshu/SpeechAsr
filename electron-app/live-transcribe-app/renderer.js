@@ -147,6 +147,11 @@ async function requestMicPermission() {
     state.micStatus = status;
     setBadge(el.micStatusBadge, statusLabel(status), statusBadgeClass(status));
     appendLog(`请求权限：${statusLabel(status)}`);
+
+    if (status !== 'granted' && window.liveApp?.openPrivacySettings) {
+      appendLog('即将打开系统隐私设置，请手动勾选麦克风', 'warn');
+      await window.liveApp.openPrivacySettings('microphone');
+    }
   } catch (err) {
     setBadge(el.micStatusBadge, '请求失败', 'error');
     appendLog(`请求权限失败: ${err.message || err}`, 'error');

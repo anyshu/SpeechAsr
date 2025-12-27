@@ -40,6 +40,7 @@ try {
   const liveAppApi = {
     getMicPermissionStatus: () => ipcRenderer.invoke('mic-permission-status'),
     requestMicPermission: () => ipcRenderer.invoke('mic-permission-request'),
+    openPrivacySettings: (kind) => ipcRenderer.invoke('open-privacy-settings', kind),
     checkModel: () => ipcRenderer.invoke('check-model'),
     checkStreamingModel: () => ipcRenderer.invoke('check-streaming-model'),
     checkPunctuationModel: () => ipcRenderer.invoke('check-punctuation-model'),

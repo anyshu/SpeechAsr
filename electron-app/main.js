@@ -1604,6 +1604,10 @@ ipcMain.handle('mic-permission-request', async () => {
   return { status, icon: getIconPath() };
 });
 
+ipcMain.handle('open-privacy-settings', async (_event, kind) => {
+  return openPrivacySettings(kind);
+});
+
 // 新增：读取文件内容（用于API上传）
 ipcMain.handle('read-file', async (event, filePath) => {
   try {
@@ -1967,4 +1971,29 @@ async function requestMicPermission() {
   }
   // Windows / Linux 无法在此主动弹窗，引导用户在系统设置中打开
   return getMicPermissionStatus();
+}
+
+async function openPrivacySettings(kind = 'microphone') {
+  if (process.platform !== 'darwin') {
+    return { success: false, message: '仅支持在 macOS 上跳转权限设置' };
+  }
+
+  const section = kind === 'accessibility' ? 'Privacy_Accessibility' : 'Privacy_Microphone';
+
+  if (typeof systemPreferences.openSystemPreferences === 'function') {
+    try {
+      await systemPreferences.openSystemPreferences('security', section);
+      return { success: true };
+    } catch (err) {
+      console.warn('[Privacy] openSystemPreferences failed', err);
+    }
+  }
+
+  try {
+    // Fallback：使用 URL scheme 打开隐私设置
+    await shell.openExternal(`x-apple.systempreferences:com.apple.preference.security?${section}`);
+    return { success: true };
+  } catch (err) {
+    return { success: false, message: err?.message || String(err) };
+  }
 }
