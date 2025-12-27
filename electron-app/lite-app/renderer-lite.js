@@ -20,8 +20,10 @@ const state = {
     totalChars: 0,
     sessions: 0,
     lastText: '',
-    lastPersona: ''
-  }
+    lastPersona: '',
+    lastTime: null
+  },
+  history: []
 };
 
 const personaState = {
@@ -30,6 +32,10 @@ const personaState = {
   icons: ['🌐', '🗒️', '💻', '✨', '🎧', '📚', '💡', '🧠', '🎯', '🛠️', '💬', '🪄'],
   storageKey: 'xigua-lite-personas',
   activeKey: 'xigua-lite-active-persona'
+};
+
+const historyState = {
+  storageKey: 'xigua-lite-history'
 };
 
 const defaultPersonas = [
@@ -73,6 +79,7 @@ async function init() {
   wireNavigation();
   setActivePage('homePage');
   await initPersonas();
+  hydrateHistory();
   bindEvents();
   wireProgressListeners();
   hydrateDefaults();
@@ -110,6 +117,10 @@ function cacheElements() {
   el.pages = document.querySelectorAll('.page');
   el.statChars = document.getElementById('statChars');
   el.statSessions = document.getElementById('statSessions');
+  el.statSessionsSub = document.getElementById('statSessionsSub');
+  el.statWords = document.getElementById('statWords');
+  el.statTimeSaved = document.getElementById('statTimeSaved');
+  el.heroCollabCount = document.getElementById('heroCollabCount');
   el.statAutoPaste = document.getElementById('statAutoPaste');
   el.statPersona = document.getElementById('statPersona');
   el.homeModelStatus = document.getElementById('homeModelStatus');
@@ -117,7 +128,10 @@ function cacheElements() {
   el.homeLlmStatus = document.getElementById('homeLlmStatus');
   el.homePersonaPill = document.getElementById('homePersonaPill');
   el.homeLatestPersona = document.getElementById('homeLatestPersona');
+  el.homeLatestTime = document.getElementById('homeLatestTime');
   el.homeLatestLength = document.getElementById('homeLatestLength');
+  el.homeTimelineStatus = document.getElementById('homeTimelineStatus');
+  el.homeHistoryList = document.getElementById('homeHistoryList');
   el.lastTranscriptionText = document.getElementById('lastTranscriptionText');
 
   el.micStatusBadge = document.getElementById('micStatusBadge');
@@ -959,11 +973,21 @@ function updateHomeStatuses() {
   if (el.statAutoPaste) {
     el.statAutoPaste.textContent = state.autoPaste ? '开启' : '关闭';
   }
+  if (el.homeTimelineStatus) {
+    el.homeTimelineStatus.textContent = state.enableLlm ? 'LLM 精修开启' : '转写就绪';
+    el.homeTimelineStatus.className = `timeline-status ${state.enableLlm ? 'ready' : 'muted'}`;
+  }
 }
 
 function updateStatsDisplay(lastLength = null) {
-  if (el.statChars) el.statChars.textContent = formatNumber(state.stats.totalChars);
+  const words = Math.max(0, Math.round(state.stats.totalChars / 2));
+  const timeSaved = Math.max(0, Math.round(words / 40));
+  if (el.statChars) el.statChars.textContent = formatNumber(words);
+  if (el.statWords) el.statWords.textContent = formatNumber(words);
+  if (el.statTimeSaved) el.statTimeSaved.textContent = formatNumber(timeSaved);
   if (el.statSessions) el.statSessions.textContent = formatNumber(state.stats.sessions);
+  if (el.statSessionsSub) el.statSessionsSub.textContent = formatNumber(state.stats.sessions);
+  if (el.heroCollabCount) el.heroCollabCount.textContent = formatNumber(state.stats.sessions);
   if (el.statPersona) el.statPersona.textContent = state.stats.lastPersona || getActivePersona()?.name || '人设';
   if (el.homeLatestPersona) el.homeLatestPersona.textContent = state.stats.lastPersona || getActivePersona()?.name || '人设';
   if (el.homePersonaPill) el.homePersonaPill.textContent = state.stats.lastPersona || getActivePersona()?.name || '人设';
@@ -971,9 +995,14 @@ function updateStatsDisplay(lastLength = null) {
 
   const latestLen = lastLength != null ? lastLength : (state.stats.lastText || '').length;
   if (el.homeLatestLength) el.homeLatestLength.textContent = `${latestLen} 字`;
+  if (el.homeLatestTime) {
+    const timeText = state.stats.lastTime ? new Date(state.stats.lastTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+    el.homeLatestTime.textContent = timeText;
+  }
   if (el.lastTranscriptionText) {
     el.lastTranscriptionText.textContent = state.stats.lastText || '等待开始';
   }
+  renderHistoryList();
 }
 
 function recordTranscription(text) {
@@ -981,11 +1010,20 @@ function recordTranscription(text) {
   const personaName = getActivePersona()?.name || '人设';
   state.stats.lastPersona = personaName;
   state.stats.lastText = content || '等待开始';
+  state.stats.lastTime = Date.now();
   const trimmed = content.trim();
-  if (trimmed) {
+  const hasContent = Boolean(trimmed);
+  if (hasContent) {
     state.stats.totalChars += content.length;
     state.stats.sessions += 1;
   }
+  addHistoryEntry({
+    text: hasContent ? content : '转写失败',
+    persona: personaName,
+    time: state.stats.lastTime,
+    length: content.length,
+    status: hasContent ? 'ok' : 'error'
+  });
   updateStatsDisplay(content.length);
 }
 
@@ -1001,6 +1039,71 @@ function statusBadgeClass(status) {
   if (status === 'denied') return 'error';
   if (status === 'restricted') return 'warn';
   return 'muted';
+}
+
+function addHistoryEntry(entry) {
+  state.history.unshift({
+    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    ...entry
+  });
+  state.history = state.history.slice(0, 50);
+  persistHistory();
+}
+
+function renderHistoryList() {
+  if (!el.homeHistoryList) return;
+  el.homeHistoryList.innerHTML = '';
+  if (!state.history.length) {
+    const empty = document.createElement('div');
+    empty.className = 'history-empty';
+    empty.textContent = '暂无历史记录';
+    el.homeHistoryList.appendChild(empty);
+    return;
+  }
+
+  state.history.forEach((item) => {
+    const node = document.createElement('div');
+    node.className = `history-row ${item.status || 'ok'}`;
+    const timeText = item.time ? new Date(item.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+    const statusText = item.status === 'error' ? '⚠️ 转写失败' : '✓ 转写完成';
+    node.innerHTML = `
+      <div class="timeline-time">${escapeHtml(timeText)}</div>
+      <div class="history-card">
+        <div class="timeline-head">
+          <div class="timeline-meta">
+            <span class="pill">${escapeHtml(item.persona || '人设')}</span>
+            <span class="pill hollow">${formatNumber(Math.max(0, item.length || 0))} 字</span>
+          </div>
+          <div class="timeline-status ${item.status === 'error' ? 'error' : 'ready'}">
+            ${escapeHtml(statusText)}
+          </div>
+        </div>
+        <div class="timeline-text">${escapeHtml(item.text || '无结果')}</div>
+      </div>
+    `;
+    el.homeHistoryList.appendChild(node);
+  });
+}
+
+function hydrateHistory() {
+  try {
+    const raw = window.localStorage?.getItem?.(historyState.storageKey);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      state.history = parsed.slice(0, 50);
+    }
+  } catch (err) {
+    // ignore parse errors
+  }
+}
+
+function persistHistory() {
+  try {
+    window.localStorage?.setItem?.(historyState.storageKey, JSON.stringify(state.history));
+  } catch (err) {
+    // ignore write errors
+  }
 }
 
 function keyLabel(key) {

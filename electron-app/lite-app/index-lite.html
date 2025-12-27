@@ -36,93 +36,56 @@
 
     <main class="content">
       <section class="page active" data-page="homePage">
-        <section class="hero">
-          <div class="hero-meta">
-            <div class="eyebrow">当前人设</div>
+        <section class="home-hero">
+          <div class="home-hero-meta">
+            <div class="hero-eyebrow">西瓜说 · Lite</div>
             <div class="hero-title" id="activePersonaName">自动翻译</div>
-          </div>
-          <div class="hero-stats">
-            <div class="stat-card">
-              <div class="stat-label">累计转写字数</div>
-              <div class="stat-value" id="statChars">0</div>
-              <div class="stat-desc">已输出字符</div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-label">会话次数</div>
-              <div class="stat-value" id="statSessions">0</div>
-              <div class="stat-desc">完成的按键转写</div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-label">模型状态</div>
-              <div class="stat-value" id="modelSummary">未检测</div>
-              <div class="stat-desc" id="modelProgressTextHero">SenseVoice · ZipFormer · 标点 · VAD</div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-label">自动粘贴</div>
-              <div class="stat-value" id="statAutoPaste">开启</div>
-              <div class="stat-desc">按住 Option / Alt 录音</div>
+            <div class="hero-persona-line">当前人设 · <span id="statPersona">自动翻译</span></div>
+            <p class="hero-sub">选择文本框，按住 Option / Alt 开始说话，最近你已完成了 <span id="heroCollabCount">0</span> 次协作</p>
+            <div class="hero-pills">
+              <span class="pill" id="homePersonaPill">人设</span>
+              <span class="pill" id="homeModelStatus">未检测</span>
+              <span class="pill" id="homeMicStatus">未知</span>
+              <span class="pill" id="homeLlmStatus">关闭</span>
             </div>
           </div>
-        </section>
-
-        <section class="panel-grid wide home-grid">
-          <div class="panel">
-            <div class="panel-header">
-              <div>
-                <div class="panel-title">今日速览</div>
-                <div class="panel-desc">累计数据与系统状态</div>
+          <div class="hero-metrics">
+            <div class="metric-card">
+              <div class="metric-icon mic">🎙️</div>
+              <div class="metric-body">
+                <div class="metric-label">累计语音输入</div>
+                <div class="metric-value"><span id="statSessions">0</span><span class="metric-unit"> 次</span></div>
+                <div class="metric-sub">共 <span id="statSessionsSub">0</span> 次转写</div>
               </div>
             </div>
-            <div class="status-list">
-              <div class="status-row">
-                <div>
-                  <div class="status-title">最新人设</div>
-                  <div class="status-desc" id="statPersona">自动翻译</div>
-                </div>
-                <span class="pill" id="homePersonaPill">人设</span>
-              </div>
-              <div class="status-row">
-                <div>
-                  <div class="status-title">模型</div>
-                  <div class="status-desc">SenseVoice / ZipFormer</div>
-                </div>
-                <span class="pill" id="homeModelStatus">未检测</span>
-              </div>
-              <div class="status-row">
-                <div>
-                  <div class="status-title">麦克风权限</div>
-                  <div class="status-desc">检测与请求</div>
-                </div>
-                <span class="pill" id="homeMicStatus">未知</span>
-              </div>
-              <div class="status-row">
-                <div>
-                  <div class="status-title">LLM 精修</div>
-                  <div class="status-desc">结合人设优化输出</div>
-                </div>
-                <span class="pill" id="homeLlmStatus">关闭</span>
+            <div class="metric-card">
+              <div class="metric-icon doc">📝</div>
+              <div class="metric-body">
+                <div class="metric-label">生成文本</div>
+                <div class="metric-value"><span id="statChars">0</span><span class="metric-unit"> 词</span></div>
+                <div class="metric-sub">词数 · 平均 / 分</div>
               </div>
             </div>
-          </div>
-
-          <div class="panel">
-            <div class="panel-header">
-              <div>
-                <div class="panel-title">最新转写</div>
-                <div class="panel-desc">实时捕捉最近一次的最终结果</div>
+            <div class="metric-card">
+              <div class="metric-icon time">⚡</div>
+              <div class="metric-body">
+                <div class="metric-label">节省时间</div>
+                <div class="metric-value"><span id="statTimeSaved">0</span><span class="metric-unit"> 分钟</span></div>
+                <div class="metric-sub">按 40 WPM 估算</div>
               </div>
-            </div>
-            <div class="latest-card">
-              <div class="latest-meta">
-                <span class="pill" id="homeLatestPersona">自动翻译</span>
-                <span class="pill hollow" id="homeLatestLength">0 字</span>
-              </div>
-              <div class="latest-text" id="lastTranscriptionText">等待开始</div>
             </div>
           </div>
         </section>
 
-        <section class="panel wide-single results">
+        <section class="home-today">
+          <div class="section-title-row">
+            <div class="panel-title">今天</div>
+            <div class="panel-desc">2pass 结果历史，按时间倒序</div>
+          </div>
+          <div class="history-list" id="homeHistoryList"></div>
+        </section>
+
+        <section class="home-results">
           <div class="panel-title">实时结果</div>
           <div class="pass pass-first">
             <div class="pass-label">第一遍 · ZipFormer</div>
