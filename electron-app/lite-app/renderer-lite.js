@@ -6,6 +6,12 @@ const state = {
     punctuation: false,
     vad: false
   },
+  modelProgress: {
+    sense: { status: 'idle', percent: 0, message: '等待下载' },
+    stream: { status: 'idle', percent: 0, message: '等待下载' },
+    punct: { status: 'idle', percent: 0, message: '等待下载' },
+    vad: { status: 'idle', percent: 0, message: '等待下载' }
+  },
   modelsLoaded: false,
   autoPaste: true,
   manualRealtime: false,
@@ -52,6 +58,12 @@ const defaultPersonas = [
     name: '命令行大神',
     icon: '💻',
     description: '将语音转为命令/代码，谨慎补全参数并简述作用。'
+  },
+  {
+    id: 'transcribe-only',
+    name: '仅转写',
+    icon: '📝',
+    description: '只做语音转写，不使用 LLM 精修或改写。'
   },
   {
     id: 'office',
@@ -135,12 +147,24 @@ function cacheElements() {
   el.modelSummary = document.getElementById('modelSummary');
   el.modelSummarySecondary = document.getElementById('modelSummarySecondary');
   el.modelProgressTextHero = document.getElementById('modelProgressTextHero');
-  el.modelProgressText = document.getElementById('modelProgressText');
+  el.progressBars = {
+    sense: document.getElementById('senseProgressBar'),
+    stream: document.getElementById('streamProgressBar'),
+    punct: document.getElementById('punctProgressBar'),
+    vad: document.getElementById('vadProgressBar')
+  };
+  el.progressTexts = {
+    sense: document.getElementById('senseProgressText'),
+    stream: document.getElementById('streamProgressText'),
+    punct: document.getElementById('punctProgressText'),
+    vad: document.getElementById('vadProgressText')
+  };
   el.micSelect = document.getElementById('micSelect');
   el.refreshMicBtn = document.getElementById('refreshMicBtn');
   el.checkMicBtn = document.getElementById('checkMicBtn');
   el.requestMicBtn = document.getElementById('requestMicBtn');
   el.downloadAllBtn = document.getElementById('downloadAllBtn');
+  el.openModelDirBtn = document.getElementById('openModelDirBtn');
   el.loadModelsBtn = document.getElementById('loadModelsBtn');
   el.releaseModelsBtn = document.getElementById('releaseModelsBtn');
   el.autoPasteToggle = document.getElementById('autoPasteToggle');
@@ -205,6 +229,13 @@ function bindEvents() {
     const persona = getActivePersona();
     if (persona) deletePersona(persona.id);
   });
+  el.openModelDirBtn?.addEventListener('click', async () => {
+    try {
+      await window.liveApp?.openModelFolder?.();
+    } catch (err) {
+      appendLog(`打开模型目录失败: ${err.message || err}`, 'error');
+    }
+  });
 }
 
 async function initPersonas() {
@@ -214,7 +245,7 @@ async function initPersonas() {
   } catch {
     // ignore
   }
-  const personas = Array.isArray(remote?.personas) && remote.personas.length ? remote.personas : defaultPersonas.slice();
+  const personas = ensureBuiltinPersonas(Array.isArray(remote?.personas) && remote.personas.length ? remote.personas : defaultPersonas.slice());
   const fallbackId = personas[0]?.id || defaultPersonas[0]?.id;
   const active = remote?.activeId && personas.some((p) => p.id === remote.activeId) ? remote.activeId : fallbackId;
 
@@ -225,12 +256,21 @@ async function initPersonas() {
   if (activePersona) {
     state.stats.lastPersona = activePersona.name || '';
   }
+  applyPersonaLlmDefault(activePersona);
   renderPersonaList();
   renderPersonaDetail();
 }
 
 function getActivePersona() {
   return personaState.personas.find((p) => p.id === personaState.activeId) || personaState.personas[0] || null;
+}
+
+function ensureBuiltinPersonas(list) {
+  const map = new Map((list || []).map((p) => [p.id, p]));
+  defaultPersonas.forEach((p) => {
+    if (!map.has(p.id)) map.set(p.id, p);
+  });
+  return Array.from(map.values());
 }
 
 function isBuiltinPersona(id) {
@@ -241,6 +281,13 @@ function personaPreview(text, max = 72) {
   const cleaned = (text || '').replace(/\s+/g, ' ').trim();
   if (!cleaned) return '点击编辑人设，写下希望 AI 遵守的语气、格式或约束';
   return cleaned.length > max ? `${cleaned.slice(0, max)}...` : cleaned;
+}
+
+function applyPersonaLlmDefault(persona) {
+  const shouldEnable = persona?.id !== 'transcribe-only';
+  state.enableLlm = shouldEnable;
+  if (el.llmToggle) el.llmToggle.checked = shouldEnable;
+  updateHomeStatuses();
 }
 
 function renderPersonaList() {
@@ -315,6 +362,7 @@ function setActivePersona(id) {
   personaState.activeId = id;
   renderPersonaList();
   renderPersonaDetail();
+  applyPersonaLlmDefault(getActivePersona());
   appendLog(`人设切换为：${getActivePersona()?.name || id}`);
   persistPersonas();
   window.liveApp?.setActivePersona?.(id);
@@ -332,6 +380,7 @@ function handlePersonaDraftChange() {
   persona.description = el.personaDescription?.value || persona.description;
   renderPersonaList();
   updateHeroPersona(persona);
+  applyPersonaLlmDefault(persona);
 }
 
 function savePersonaForm() {
@@ -415,16 +464,16 @@ function wireProgressListeners() {
   cleanupFns = [];
 
   if (window.liveApp?.onModelProgress) {
-    cleanupFns.push(window.liveApp.onModelProgress((payload) => updateProgressText('SenseVoice', payload)));
+    cleanupFns.push(window.liveApp.onModelProgress((payload) => updateModelProgress('sense', 'SenseVoice', payload)));
   }
   if (window.liveApp?.onStreamingProgress) {
-    cleanupFns.push(window.liveApp.onStreamingProgress((payload) => updateProgressText('流式', payload)));
+    cleanupFns.push(window.liveApp.onStreamingProgress((payload) => updateModelProgress('stream', '流式', payload)));
   }
   if (window.liveApp?.onPunctuationProgress) {
-    cleanupFns.push(window.liveApp.onPunctuationProgress((payload) => updateProgressText('标点', payload)));
+    cleanupFns.push(window.liveApp.onPunctuationProgress((payload) => updateModelProgress('punct', '标点', payload)));
   }
   if (window.liveApp?.onVadProgress) {
-    cleanupFns.push(window.liveApp.onVadProgress((payload) => updateProgressText('VAD', payload)));
+    cleanupFns.push(window.liveApp.onVadProgress((payload) => updateModelProgress('vad', 'VAD', payload)));
   }
 }
 
@@ -457,6 +506,7 @@ function hydrateDefaults() {
     if (el.autoPasteToggle) el.autoPasteToggle.checked = state.autoPaste;
     if (el.manualRealtimeToggle) el.manualRealtimeToggle.checked = state.manualRealtime;
     if (el.llmToggle) el.llmToggle.checked = state.enableLlm;
+    applyPersonaLlmDefault(getActivePersona());
     updateHomeStatuses();
     updateStatsDisplay();
   });
@@ -573,6 +623,9 @@ function setModelRow(key, ok) {
     text.textContent = ok ? '已就绪' : '未就绪';
     text.classList.toggle('log-error', !ok);
   }
+  if (ok) {
+    updateModelProgress(key, keyLabel(key), { status: 'done', percent: 100, message: '已就绪' });
+  }
 }
 
 function updateModelSummary() {
@@ -585,28 +638,40 @@ function updateModelSummary() {
   setPill(el.homeModelStatus, ready ? '已就绪' : '缺少模型', ready ? 'success' : 'warn');
 }
 
-function updateProgressText(label, payload) {
-  const setText = (text) => {
-    if (el.modelProgressText) el.modelProgressText.textContent = text;
-    if (el.modelProgressTextHero) el.modelProgressTextHero.textContent = text;
-  };
+function updateModelProgress(key, label, payload) {
+  const percent =
+    typeof payload?.percent === 'number'
+      ? Math.min(100, Math.max(0, Math.round(payload.percent)))
+      : state.modelProgress[key]?.percent || 0;
+  const status = payload?.status || 'downloading';
+  const message = payload?.message || status;
 
-  if (!payload || payload.status === 'done' || payload.status === 'completed') {
-    setText(`${label}: 完成`);
-    return;
+  state.modelProgress[key] = { status, percent, message };
+
+  const bar = el.progressBars?.[key];
+  const text = el.progressTexts?.[key];
+  if (bar) {
+    bar.style.setProperty('--pct', `${percent}%`);
+    bar.classList.toggle('done', status === 'done' || status === 'completed');
+    bar.classList.toggle('error', status === 'error');
   }
-  if (payload.status === 'error') {
-    setText(`${label}: ${payload.message || '下载失败'}`);
-    return;
+  if (text) {
+    const pctText = status === 'done' || status === 'completed' ? '100%' : payload?.percent != null ? `${percent}%` : '';
+    text.textContent = `${label}: ${message}${pctText ? ` ${pctText}` : ''}`;
   }
-  const pct = payload.percent != null ? `${payload.percent}%` : '';
-  const msg = payload.message || payload.status || '下载中';
-  setText(`${label}: ${msg} ${pct}`);
+
+  const aggregate = `${label}: ${message}${payload?.percent != null ? ` ${percent}%` : ''}`;
+  if (el.modelProgressTextHero) el.modelProgressTextHero.textContent = aggregate;
 }
 
 async function downloadModelByKey(key) {
+  const currentStatus = state.modelProgress[key]?.status;
+  if (['starting', 'downloading', 'extracting'].includes(currentStatus)) {
+    appendLog(`${keyLabel(key)} 正在下载中`, 'warn');
+    return;
+  }
   try {
-    updateProgressText(keyLabel(key), { status: 'starting', percent: 0 });
+    updateModelProgress(key, keyLabel(key), { status: 'starting', percent: 0, message: '开始下载' });
     let result = { success: false };
     if (key === 'sense') {
       result = await window.liveApp?.downloadModel?.();
@@ -632,25 +697,17 @@ async function downloadModelByKey(key) {
 
 async function downloadAllModels() {
   if (!window.liveApp) return;
-  disableModelButtons(true);
-  const queue = [];
-  if (!state.models.sense) queue.push(() => downloadModelByKey('sense'));
-  if (!state.models.streaming) queue.push(() => downloadModelByKey('stream'));
-  if (!state.models.punctuation) queue.push(() => downloadModelByKey('punct'));
-  if (!state.models.vad) queue.push(() => downloadModelByKey('vad'));
+  const tasks = [];
+  if (!state.models.sense) tasks.push(downloadModelByKey('sense'));
+  if (!state.models.streaming) tasks.push(downloadModelByKey('stream'));
+  if (!state.models.punctuation) tasks.push(downloadModelByKey('punct'));
+  if (!state.models.vad) tasks.push(downloadModelByKey('vad'));
 
-  for (const task of queue) {
-    await task();
-  }
-  disableModelButtons(false);
-  updateProgressText('全部', { status: 'done' });
-}
-
-function disableModelButtons(disabled) {
-  document.querySelectorAll('[data-download]').forEach((btn) => {
-    btn.disabled = disabled;
-  });
-  if (el.downloadAllBtn) el.downloadAllBtn.disabled = disabled;
+  await Promise.allSettled(tasks);
+  updateModelProgress('sense', keyLabel('sense'), state.modelProgress.sense);
+  updateModelProgress('stream', keyLabel('stream'), state.modelProgress.stream);
+  updateModelProgress('punct', keyLabel('punct'), state.modelProgress.punct);
+  updateModelProgress('vad', keyLabel('vad'), state.modelProgress.vad);
 }
 
 function attachLiveListeners() {
@@ -673,7 +730,7 @@ function listenPersonaUpdates() {
   if (!window.liveApp?.onPersonaUpdated) return;
   window.liveApp.onPersonaUpdated((payload) => {
     if (!payload || !Array.isArray(payload.personas)) return;
-    personaState.personas = payload.personas;
+    personaState.personas = ensureBuiltinPersonas(payload.personas);
     const fallbackId = personaState.personas[0]?.id || personaState.activeId;
     personaState.activeId =
       payload.activeId && personaState.personas.some((p) => p.id === payload.activeId)
@@ -681,6 +738,7 @@ function listenPersonaUpdates() {
         : fallbackId;
     renderPersonaList();
     renderPersonaDetail();
+    applyPersonaLlmDefault(getActivePersona());
     updateStatsDisplay();
   });
 }
@@ -703,6 +761,14 @@ function handleLiveResult(payload) {
       break;
     case 'ready':
       appendLog('模型已就绪');
+      Object.entries(state.modelProgress).forEach(([key, prog]) => {
+        if (key === 'stream' && state.models.streaming) {
+          updateModelProgress(key, keyLabel(key), { status: 'done', percent: 100, message: '已就绪' });
+        }
+        if (key === 'sense' && state.models.sense) {
+          updateModelProgress(key, keyLabel(key), { status: 'done', percent: 100, message: '已就绪' });
+        }
+      });
       break;
     case 'error':
       appendLog(payload.message || '实时转写出错', 'error');

@@ -92,6 +92,7 @@ const DEFAULT_PERSONAS = [
   { id: 'default', name: '默认风格', icon: '🎙️', description: '保持客观简洁，直给结果。' },
   { id: 'translator', name: '自动翻译', icon: '🌐', description: '中文转自然英文，英文润色但不改语义，专有名词保持原样。' },
   { id: 'cmd-master', name: '命令行大神', icon: '💻', description: '你是一个精通 Linux、FFmpeg、OpenSSL、Curl 等工具的命令行终端专家。\n\n【指令说明】\n用户会输入一句【自然语言描述的需求】，请将其"编译"为"最简洁、高效、可直接执行"的 Command Line 命令。\n\n【改写公式】\n1. 第一步（工具锁定）： 迅速分析需求，定位核心工具（如 awk, sed, ffmpeg, openssl, docker 等）。\n2. 第二步（参数构建）： 组合参数以实现功能。优先使用管道符 | 组合命令，追求单行解决问题。\n3. 第三步（绝对静默）： 禁止输出任何解释、注释或Markdown格式（除非代码换行需要）。只输出代码本身。\n\n【Few-Shot 转换示范】\n\n- 输入（需求）： "显示当前所有python进程的进程号"\n  - 输出： ps aux | grep python | grep -v grep | awk \'{print $2}\'\n\n- 输入（需求）： "把当前目录下的视频全部转成mp3"\n  - 输出： for i in *.mp4; do ffmpeg -i "$i" -vn "${i%.*}.mp3"; done\n\n- 输入（需求）： "查一下本机公网IP"\n  - 输出： curl ifconfig.me\n\n- 输入（需求）： "生成一个32位的随机十六进制字符串"\n  - 输出： openssl rand -hex 16\n\n【开始执行】\n请输入你的需求（自然语言）。' },
+  { id: 'transcribe-only', name: '仅转写', icon: '📝', description: '只做语音转写，不使用 LLM 精修或改写。' },
   { id: 'office', name: '职场大佬', icon: '🧳', description: '正式、稳重、条理清晰，适合职场沟通。' },
   { id: 'wild', name: '发疯文学', icon: '🔥', description: '夸张有趣，节奏快，保持核心信息但更抓眼。' }
 ];
@@ -105,10 +106,19 @@ const settingsStore = new Store({
 });
 
 function loadPersonaState() {
+  const ensureBuiltins = (list) => {
+    const map = new Map((list || []).map((p) => [p.id, p]));
+    DEFAULT_PERSONAS.forEach((p) => {
+      if (!map.has(p.id)) map.set(p.id, p);
+    });
+    return Array.from(map.values());
+  };
+
   if (persistence?.loadPersonas) {
-    return persistence.loadPersonas();
+    const loaded = persistence.loadPersonas();
+    return { personas: ensureBuiltins(loaded.personas), activeId: loaded.activeId };
   }
-  const personas = settingsStore.get('personas', DEFAULT_PERSONAS);
+  const personas = ensureBuiltins(settingsStore.get('personas', DEFAULT_PERSONAS));
   const activeId = settingsStore.get('activePersonaId', personas[0]?.id || DEFAULT_PERSONAS[0].id);
   return { personas, activeId };
 }
@@ -215,15 +225,15 @@ function addHistory(entry) {
   settingsStore.set('history', list.slice(0, 500));
 }
 
-const OFFLINE_MODEL_URL = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2';
-// const OFFLINE_MODEL_URL = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-funasr-nano-2025-12-17.tar.bz2';
-// const OFFLINE_MODEL_URL = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-funasr-nano-int8-2025-12-17.tar.bz2'
+const OFFLINE_MODEL_URL = 'https://ghfast.top/https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2';
+// const OFFLINE_MODEL_URL = 'https://ghfast.top/https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-funasr-nano-2025-12-17.tar.bz2';
+// const OFFLINE_MODEL_URL = 'https://ghfast.top/https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-funasr-nano-int8-2025-12-17.tar.bz2'
 const OFFLINE_MODEL_DIR_NAME = 'offline-recognition-model';
-const PUNCT_MODEL_URL = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/punctuation-models/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12-int8.tar.bz2';
+const PUNCT_MODEL_URL = 'https://ghfast.top/https://github.com/k2-fsa/sherpa-onnx/releases/download/punctuation-models/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12-int8.tar.bz2';
 const PUNCT_MODEL_DIR_NAME = 'punctuation-model';
-const STREAMING_MODEL_URL = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20.tar.bz2';
+const STREAMING_MODEL_URL = 'https://ghfast.top/https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20.tar.bz2';
 const STREAMING_MODEL_DIR_NAME = 'online-recognition-model';
-const VAD_MODEL_URL = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad_v5.onnx';
+const VAD_MODEL_URL = 'https://ghfast.top/https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad_v5.onnx';
 const VAD_MODEL_FILENAME = 'silero_vad.onnx';
 const ICON_PATH = path.join(__dirname, 'ok.png');
 const APP_NAME = currentConfig.appName;
@@ -256,6 +266,7 @@ let cachedPythonPath = null;
 let tray = null;
 let persistence = null;
 let forceQuit = false;
+let startupChecked = false;
 const PYTHON_NOT_FOUND_MESSAGE =
   '未找到可用的 Python3，请安装 Python3 或将 SPEECH_ASR_PYTHON 指向可执行文件';
 
@@ -1183,7 +1194,8 @@ function createWindow() {
     });
   });
 
-  mainWindow.loadFile(currentConfig.htmlFile);
+  const initialFile = startupChecked ? currentConfig.htmlFile : 'startup-check.html';
+  mainWindow.loadFile(initialFile);
 
   // Forward renderer console logs to main process for debugging
   mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
@@ -1546,6 +1558,30 @@ ipcMain.handle('usage:get', async () => {
 
 ipcMain.handle('usage:set', async (_event, stats) => {
   return setUsageStats(stats || {});
+});
+
+// 启动检测完成后加载主界面
+ipcMain.handle('startup:complete', async () => {
+  startupChecked = true;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    await mainWindow.loadFile(currentConfig.htmlFile);
+  }
+  return { success: true };
+});
+
+ipcMain.handle('model:open-folder', async () => {
+  try {
+    const { downloadBase } = getModelPaths();
+    fs.mkdirSync(downloadBase, { recursive: true });
+    const result = await shell.openPath(downloadBase);
+    if (result) {
+      // shell.openPath returns a non-empty string on error
+      return { success: false, message: result };
+    }
+    return { success: true, path: downloadBase };
+  } catch (err) {
+    return { success: false, message: err?.message || String(err) };
+  }
 });
 
 ipcMain.handle('mic-permission-status', async () => {

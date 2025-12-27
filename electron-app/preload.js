@@ -13,6 +13,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onProcessingProgress: (callback) => ipcRenderer.on('processing-progress', callback),
   onProcessingError: (callback) => ipcRenderer.on('processing-error', callback),
   onModelDownloadProgress: (callback) => ipcRenderer.on('model-download-progress', callback),
+  onPunctuationProgress: (callback) => ipcRenderer.on('punctuation-download-progress', callback),
+  onStreamingProgress: (callback) => ipcRenderer.on('streaming-download-progress', callback),
+  onVadProgress: (callback) => ipcRenderer.on('vad-download-progress', callback),
   
   // 移除事件监听
   removeProcessingListeners: () => {
@@ -99,5 +102,42 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const handler = (_event, payload) => callback(payload || {});
     ipcRenderer.on('persona-updated', handler);
     return () => ipcRenderer.removeListener('persona-updated', handler);
-  }
-}); 
+  },
+  startupComplete: () => ipcRenderer.invoke('startup:complete')
+});
+
+// 兼容 lite/live 接口命名，便于启动检测页复用
+contextBridge.exposeInMainWorld('liveApp', {
+  checkModel: () => ipcRenderer.invoke('check-model'),
+  downloadModel: () => ipcRenderer.invoke('download-model'),
+  checkPunctuationModel: () => ipcRenderer.invoke('check-punctuation-model'),
+  downloadPunctuationModel: () => ipcRenderer.invoke('download-punctuation-model'),
+  checkStreamingModel: () => ipcRenderer.invoke('check-streaming-model'),
+  downloadStreamingModel: () => ipcRenderer.invoke('download-streaming-model'),
+  checkVadModel: () => ipcRenderer.invoke('check-vad-model'),
+  downloadVadModel: () => ipcRenderer.invoke('download-vad-model'),
+  onModelProgress: (cb) => {
+    const handler = (_e, payload) => cb(payload || {});
+    ipcRenderer.on('model-download-progress', handler);
+    return () => ipcRenderer.removeListener('model-download-progress', handler);
+  },
+  onPunctuationProgress: (cb) => {
+    const handler = (_e, payload) => cb(payload || {});
+    ipcRenderer.on('punctuation-download-progress', handler);
+    return () => ipcRenderer.removeListener('punctuation-download-progress', handler);
+  },
+  onStreamingProgress: (cb) => {
+    const handler = (_e, payload) => cb(payload || {});
+    ipcRenderer.on('streaming-download-progress', handler);
+    return () => ipcRenderer.removeListener('streaming-download-progress', handler);
+  },
+  onVadProgress: (cb) => {
+    const handler = (_e, payload) => cb(payload || {});
+    ipcRenderer.on('vad-download-progress', handler);
+    return () => ipcRenderer.removeListener('vad-download-progress', handler);
+  },
+  openModelFolder: () => ipcRenderer.invoke('model:open-folder'),
+  getModeDefaults: () => ipcRenderer.invoke('get-mode-defaults'),
+  getAppMode: () => ipcRenderer.invoke('get-app-mode'),
+  startupComplete: () => ipcRenderer.invoke('startup:complete')
+});

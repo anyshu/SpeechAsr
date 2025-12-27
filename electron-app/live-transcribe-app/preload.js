@@ -100,6 +100,8 @@ const liveAppApi = {
   addHistory: (entry) => ipcRenderer.invoke('history:add', entry),
   getUsageStats: () => ipcRenderer.invoke('usage:get'),
   setUsageStats: (stats) => ipcRenderer.invoke('usage:set', stats),
+  openModelFolder: () => ipcRenderer.invoke('model:open-folder'),
+  startupComplete: () => ipcRenderer.invoke('startup:complete'),
 
   // Personas
   getPersonas: () => ipcRenderer.invoke('persona:list'),

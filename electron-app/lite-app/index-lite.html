@@ -187,6 +187,10 @@
                   <span class="status-text" id="senseStatusText">未检测</span>
                   <button class="ghost" data-download="sense">下载</button>
                 </div>
+                <div class="model-progress">
+                  <div class="model-progress-bar" id="senseProgressBar"></div>
+                  <div class="model-progress-text" id="senseProgressText">等待下载</div>
+                </div>
               </div>
               <div class="model-row">
                 <div class="model-info">
@@ -199,6 +203,10 @@
                 <div class="model-actions">
                   <span class="status-text" id="streamStatusText">未检测</span>
                   <button class="ghost" data-download="stream">下载</button>
+                </div>
+                <div class="model-progress">
+                  <div class="model-progress-bar" id="streamProgressBar"></div>
+                  <div class="model-progress-text" id="streamProgressText">等待下载</div>
                 </div>
               </div>
               <div class="model-row">
@@ -213,6 +221,10 @@
                   <span class="status-text" id="punctStatusText">未检测</span>
                   <button class="ghost" data-download="punct">下载</button>
                 </div>
+                <div class="model-progress">
+                  <div class="model-progress-bar" id="punctProgressBar"></div>
+                  <div class="model-progress-text" id="punctProgressText">等待下载</div>
+                </div>
               </div>
               <div class="model-row">
                 <div class="model-info">
@@ -226,11 +238,15 @@
                   <span class="status-text" id="vadStatusText">未检测</span>
                   <button class="ghost" data-download="vad">下载</button>
                 </div>
+                <div class="model-progress">
+                  <div class="model-progress-bar" id="vadProgressBar"></div>
+                  <div class="model-progress-text" id="vadProgressText">等待下载</div>
+                </div>
               </div>
             </div>
             <div class="row space">
               <button class="secondary" id="downloadAllBtn">一键下载必需模型</button>
-              <div class="progress-text" id="modelProgressText">SenseVoice · ZipFormer · 标点 · VAD</div>
+              <button class="ghost" id="openModelDirBtn">打开模型目录</button>
             </div>
           </div>
 
@@ -238,7 +254,7 @@
             <div class="panel-header">
               <div>
                 <div class="panel-title">实时转写控制</div>
-                <div class="panel-desc">选择麦克风、切换粘贴与 LLM</div>
+                <div class="panel-desc">选择麦克风、切换粘贴与 AI处理</div>
               </div>
               <div class="badge muted" id="liveStatusBadge">未加载</div>
             </div>
@@ -260,7 +276,7 @@
               </label>
               <label class="switch" title="使用当前人设对最终文本进行精修">
                 <input type="checkbox" id="llmToggle">
-                <span>LLM 处理</span>
+                <span>AI 精修</span>
               </label>
             </div>
             <div class="btn-row">
