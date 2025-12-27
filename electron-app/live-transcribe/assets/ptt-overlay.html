@@ -96,19 +96,6 @@
       line-height: 1.2;
       flex-shrink: 0; /* 防止 flex 容器压缩子元素 */
     }
-    /* Left fade mask to visually hide old content - 覆盖整个遮罩区域 */
-    .state-wrap::before {
-      content: '';
-      position: absolute;
-      left: 0;
-      top: 0;
-      bottom: 0;
-      width: 80px; /* 更宽的渐变遮罩区域 */
-      pointer-events: none;
-      background: linear-gradient(to right, rgba(15,23,42,0.95), rgba(15,23,42,0));
-      transition: opacity 160ms ease;
-    }
-    .state-wrap.paused::before { opacity: 0.12; }
     .state-wrap.expanded { max-width: 316px; }
     .overlay[data-state="processing"] .indicator {
       background: #f59e0b;
